@@ -71,6 +71,7 @@ namespace tools { class Notify; }
 namespace cryptonote
 {
   class tx_memory_pool;
+  class workshare_memory_pool;
   struct test_options;
 
   /** Declares ways in which the BlockchainDB backend should be told to sync
@@ -1195,6 +1196,13 @@ namespace cryptonote
      */
     bool validate_block_workshares(const block& bl, block_verification_context& tvc) const;
 
+    /**
+     * @brief Set the workshare pool reference for the blockchain
+     *
+     * @param workshare_pool pointer to the workshare pool to use
+     */
+    void set_workshare_pool(workshare_memory_pool* workshare_pool);
+
 #ifndef IN_UNIT_TESTS
   private:
 #endif
@@ -1210,6 +1218,7 @@ namespace cryptonote
     BlockchainDB* m_db;
 
     tx_memory_pool& m_tx_pool;
+    workshare_memory_pool* m_workshare_pool;
 
     mutable epee::critical_section m_blockchain_lock; // TODO: add here reader/writer lock
 

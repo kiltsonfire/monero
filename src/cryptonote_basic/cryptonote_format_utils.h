@@ -37,6 +37,7 @@
 #include "include_base_utils.h"
 #include "crypto/crypto.h"
 #include "crypto/hash.h"
+#include "workshare.h"
 #include <unordered_map>
 #include <boost/multiprecision/cpp_int.hpp>
 
@@ -58,6 +59,18 @@ namespace cryptonote
   bool parse_and_validate_tx_from_blob(const blobdata_ref& tx_blob, transaction& tx);
   bool parse_and_validate_tx_base_from_blob(const blobdata_ref& tx_blob, transaction& tx);
   bool is_v1_tx(const blobdata_ref& tx_blob);
+  
+  // Workshare helper functions
+  template<typename T>
+  bool parse_and_validate_from_blob(const blobdata& blob, T& obj)
+  {
+    blobdata_ref bd_ref = blobdata_ref{blob.data(), blob.size()};
+    binary_archive<false> ba{epee::strspan<std::uint8_t>(bd_ref)};
+    bool r = ::serialization::serialize(ba, obj);
+    return r;
+  }
+  
+  crypto::hash get_workshare_hash(const workshare& ws);
   bool is_v1_tx(const blobdata& tx_blob);
 
   template<typename T>

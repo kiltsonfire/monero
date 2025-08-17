@@ -1106,6 +1106,13 @@ namespace cryptonote
     cn_fast_hash(blob.data(), blob.size(), res);
   }
   //---------------------------------------------------------------
+  crypto::hash get_workshare_hash(const workshare& ws)
+  {
+    crypto::hash h;
+    get_object_hash(ws, h);
+    return h;
+  }
+  //---------------------------------------------------------------
   void set_default_decimal_point(unsigned int decimal_point)
   {
     switch (decimal_point)

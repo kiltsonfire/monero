@@ -82,6 +82,12 @@ public:
     while (count-- && start_height < blocks.size()) ret.push_back(blocks[start_height++].long_term_weight);
     return ret;
   }
+  
+  // Workshare stub methods for TestDB
+  virtual void add_workshares(const crypto::hash& parent_block_id, const std::vector<cryptonote::workshare>& workshares) override {}
+  virtual std::vector<cryptonote::workshare> get_workshares(const crypto::hash& parent_block_id) const override { return {}; }
+  virtual void remove_workshares(const crypto::hash& parent_block_id) override {}
+  virtual bool workshares_exist(const crypto::hash& parent_block_id) const override { return false; }
   virtual crypto::hash get_block_hash_from_height(const uint64_t &height) const override {
     crypto::hash hash = crypto::null_hash;
     *(uint64_t*)&hash = height;

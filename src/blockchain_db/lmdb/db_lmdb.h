@@ -71,6 +71,8 @@ typedef struct mdb_txn_cursors
 
   MDB_cursor *m_txc_hf_versions;
 
+  MDB_cursor *m_txc_workshares_by_parent;
+
   MDB_cursor *m_txc_properties;
 } mdb_txn_cursors;
 
@@ -91,6 +93,7 @@ typedef struct mdb_txn_cursors
 #define m_cur_txpool_blob	m_cursors->m_txc_txpool_blob
 #define m_cur_alt_blocks	m_cursors->m_txc_alt_blocks
 #define m_cur_hf_versions	m_cursors->m_txc_hf_versions
+#define m_cur_workshares_by_parent	m_cursors->m_txc_workshares_by_parent
 #define m_cur_properties	m_cursors->m_txc_properties
 
 typedef struct mdb_rflags
@@ -113,6 +116,7 @@ typedef struct mdb_rflags
   bool m_rf_txpool_blob;
   bool m_rf_alt_blocks;
   bool m_rf_hf_versions;
+  bool m_rf_workshares_by_parent;
   bool m_rf_properties;
 } mdb_rflags;
 
@@ -407,6 +411,12 @@ private:
   void check_hard_fork_info() override;
   void drop_hard_fork_info() override;
 
+  // Workshare storage
+  void add_workshares(const crypto::hash& parent_block_hash, const std::vector<workshare>& workshares) override;
+  std::vector<workshare> get_workshares(const crypto::hash& parent_block_hash) const override;
+  void remove_workshares(const crypto::hash& parent_block_hash) override;
+  bool workshares_exist(const crypto::hash& parent_block_hash) const override;
+
   inline void check_open() const;
 
   bool prune_worker(int mode, uint32_t pruning_seed);
@@ -470,6 +480,8 @@ private:
 
   MDB_dbi m_hf_starting_heights;
   MDB_dbi m_hf_versions;
+
+  MDB_dbi m_workshares_by_parent;
 
   MDB_dbi m_properties;
 

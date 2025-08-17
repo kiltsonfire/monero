@@ -2884,7 +2884,7 @@ skip:
     
     // Parse the workshare
     workshare ws;
-    if (!parse_and_validate_object_from_blob(arg.workshare_blob, ws))
+    if (!parse_and_validate_from_blob(arg.workshare_blob, ws))
     {
       LOG_PRINT_CCONTEXT_L0("Failed to parse workshare, dropping connection");
       drop_connection(context, false, false);
@@ -2921,7 +2921,7 @@ skip:
       return 1;
     }
     
-    NOTIFY_RESPONSE_WORKSHARE_INVENTORY::request_t response;
+    NOTIFY_RESPONSE_WORKSHARE_INVENTORY::request response;
     response.parent_block_id = arg.parent_block_id;
     response.current_blockchain_height = m_core.get_current_blockchain_height();
     
@@ -2959,7 +2959,7 @@ skip:
       return 1;
     }
     
-    NOTIFY_RESPONSE_WORKSHARE_DATA::request_t response;
+    NOTIFY_RESPONSE_WORKSHARE_DATA::request response;
     response.current_blockchain_height = m_core.get_current_blockchain_height();
     
     // Get requested workshares from core
@@ -2994,7 +2994,7 @@ skip:
     for (const auto& ws_entry : arg.workshares)
     {
       workshare ws;
-      if (parse_and_validate_object_from_blob(ws_entry.workshare_blob, ws))
+      if (parse_and_validate_from_blob(ws_entry.workshare_blob, ws))
       {
         workshare_verification_context tvc = AUTO_VAL_INIT(tvc);
         m_core.add_workshare(ws, ws_entry.workshare_id, context.m_connection_id, tvc);

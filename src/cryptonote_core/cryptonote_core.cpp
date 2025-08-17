@@ -663,6 +663,9 @@ namespace cryptonote
     r = m_blockchain_storage.init(db.release(), m_nettype, m_offline, regtest ? &regtest_test_options : test_options, fixed_difficulty, get_checkpoints);
     CHECK_AND_ASSERT_MES(r, false, "Failed to initialize blockchain storage");
 
+    // Set workshare pool reference for blockchain
+    m_blockchain_storage.set_workshare_pool(&m_workshare_pool);
+
     r = m_mempool.init(max_txpool_weight, m_nettype == FAKECHAIN);
     CHECK_AND_ASSERT_MES(r, false, "Failed to initialize memory pool");
 

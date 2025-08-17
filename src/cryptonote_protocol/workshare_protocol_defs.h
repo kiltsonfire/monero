@@ -33,6 +33,7 @@
 #include "cryptonote_basic/workshare.h"
 #include "cryptonote_basic/blobdatatype.h"
 #include "crypto/hash.h"
+#include "misc_language.h"
 
 namespace cryptonote
 {

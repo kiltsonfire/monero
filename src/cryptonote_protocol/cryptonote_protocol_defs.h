@@ -135,6 +135,7 @@ namespace cryptonote
     blobdata block;
     uint64_t block_weight;
     std::vector<tx_blob_entry> txs;
+    std::vector<blobdata> workshares;
     BEGIN_KV_SERIALIZE_MAP()
       KV_SERIALIZE_OPT(pruned, false)
       KV_SERIALIZE(block)
@@ -160,6 +161,7 @@ namespace cryptonote
           for (auto &e: txs) self.txs.push_back({std::move(e), crypto::null_hash});
         }
       }
+      KV_SERIALIZE(workshares)
     END_KV_SERIALIZE_MAP()
 
     block_complete_entry(): pruned(false), block_weight(0) {}

@@ -39,6 +39,7 @@
 #include "cryptonote_basic/cryptonote_basic_impl.h"
 #include "cryptonote_basic/workshare.h"
 #include "tx_pool.h"
+#include "workshare_pool.h"
 #include "blockchain.h"
 #include "blockchain_db/blockchain_db.h"
 #include "cryptonote_basic/events.h"
@@ -90,7 +91,7 @@ DISABLE_VS_WARNINGS(4267)
 
 //------------------------------------------------------------------
 Blockchain::Blockchain(tx_memory_pool& tx_pool) :
-  m_db(), m_tx_pool(tx_pool), m_hardfork(NULL), m_timestamps_and_difficulties_height(0), m_reset_timestamps_and_difficulties_height(true), m_current_block_cumul_weight_limit(0), m_current_block_cumul_weight_median(0),
+  m_db(), m_tx_pool(tx_pool), m_workshare_pool(nullptr), m_hardfork(NULL), m_timestamps_and_difficulties_height(0), m_reset_timestamps_and_difficulties_height(true), m_current_block_cumul_weight_limit(0), m_current_block_cumul_weight_median(0),
   m_enforce_dns_checkpoints(false), m_max_prepare_blocks_threads(4), m_db_sync_on_blocks(true), m_db_sync_threshold(1), m_db_sync_mode(db_async), m_db_default_sync(false), m_fast_sync(true), m_show_time_stats(false), m_sync_counter(0), m_bytes_to_sync(0), m_cancel(false),
   m_long_term_block_weights_window(CRYPTONOTE_LONG_TERM_BLOCK_WEIGHT_WINDOW_SIZE),
   m_long_term_effective_median_block_weight(0),
@@ -104,6 +105,11 @@ Blockchain::Blockchain(tx_memory_pool& tx_pool) :
   m_rct_ver_cache()
 {
   LOG_PRINT_L3("Blockchain::" << __func__);
+}
+//------------------------------------------------------------------
+void Blockchain::set_workshare_pool(workshare_memory_pool* workshare_pool)
+{
+  m_workshare_pool = workshare_pool;
 }
 //------------------------------------------------------------------
 Blockchain::~Blockchain()
@@ -609,6 +615,14 @@ block Blockchain::pop_block_from_blockchain()
   try
   {
     m_db->pop_block(popped_block, popped_txs);
+    
+    // Remove workshares that were indexed by this block's parent hash
+    // (i.e., workshares that referenced this block as their parent)
+    crypto::hash block_hash = get_block_hash(popped_block);
+    if (m_db->workshares_exist(block_hash))
+    {
+      m_db->remove_workshares(block_hash);
+    }
   }
   // anything that could cause this to throw is likely catastrophic,
   // so we re-throw
@@ -2201,6 +2215,19 @@ bool Blockchain::handle_get_objects(NOTIFY_REQUEST_GET_OBJECTS::request& arg, NO
     //        is for missed blocks, not missed transactions as well.
     e.pruned = arg.prune;
     get_transactions_blobs(bl.second.tx_hashes, e.txs, missed_tx_ids, arg.prune);
+    
+    // Get workshares that are included in this block
+    // These workshares reference this block's parent, so they are indexed by the parent hash
+    if (m_db->workshares_exist(bl.second.prev_id))
+    {
+      std::vector<workshare> workshares = m_db->get_workshares(bl.second.prev_id);
+      e.workshares.reserve(workshares.size());
+      for (const auto& ws : workshares)
+      {
+        e.workshares.push_back(t_serializable_object_to_blob(ws));
+      }
+    }
+    
     if (missed_tx_ids.size() != 0)
     {
       // do not display an error if the peer asked for an unpruned block which we are not meant to have
@@ -4385,6 +4412,31 @@ leave:
     try
     {
       uint64_t long_term_block_weight = get_next_long_term_block_weight(block_weight);
+      
+      // Store workshares referenced by this block
+      if (m_workshare_pool && !bl.workshare_hashes.empty())
+      {
+        std::vector<workshare> workshares_to_store;
+        for (const auto& ws_hash : bl.workshare_hashes)
+        {
+          workshare_pool_entry entry;
+          if (m_workshare_pool->get_workshare(ws_hash, entry))
+          {
+            workshares_to_store.push_back(entry.ws);
+          }
+          else
+          {
+            MWARNING("Workshare " << ws_hash << " referenced by block but not found in pool");
+          }
+        }
+        
+        if (!workshares_to_store.empty())
+        {
+          // Store workshares indexed by the parent block hash (bl.prev_id)
+          m_db->add_workshares(bl.prev_id, workshares_to_store);
+        }
+      }
+      
       cryptonote::blobdata bd = cryptonote::block_to_blob(bl);
       new_height = m_db->add_block(std::make_pair(std::move(bl), std::move(bd)), block_weight, long_term_block_weight, cumulative_difficulty, already_generated_coins, txs);
     }
@@ -5000,6 +5052,23 @@ bool Blockchain::prepare_handle_incoming_blocks(const std::vector<block_complete
       bytes += tx_blob.blob.size();
     }
     total_txs += entry.txs.size();
+    
+    // Count workshare bytes and validate workshare blobs
+    for (const auto &ws_blob : entry.workshares)
+    {
+      bytes += ws_blob.size();
+      
+      // Basic validation: try to parse workshare from blob
+      workshare ws;
+      if (!parse_and_validate_from_blob(ws_blob, ws))
+      {
+        MERROR("Failed to parse workshare from sync data");
+        m_batch_success = false;
+        if (stop_batch)
+          m_db->batch_abort();
+        return false;
+      }
+    }
   }
   m_bytes_to_sync += bytes;
   while (!(stop_batch = m_db->batch_start(blocks_entry.size(), bytes))) {
@@ -5044,6 +5113,33 @@ bool Blockchain::prepare_handle_incoming_blocks(const std::vector<block_complete
         if (!parse_and_validate_block_from_blob(it->block, block, block_hash))
           return false;
 
+        // Validate workshares match the block's workshare hashes
+        if (block.workshare_hashes.size() != it->workshares.size())
+        {
+          MERROR("Block " << block_hash << " claims " << block.workshare_hashes.size() 
+                 << " workshares but sync data contains " << it->workshares.size());
+          return false;
+        }
+        
+        for (size_t ws_idx = 0; ws_idx < block.workshare_hashes.size(); ++ws_idx)
+        {
+          workshare ws;
+          if (!parse_and_validate_from_blob(it->workshares[ws_idx], ws))
+          {
+            MERROR("Failed to parse workshare " << ws_idx << " for block " << block_hash);
+            return false;
+          }
+          
+          crypto::hash ws_hash = get_workshare_hash(ws);
+          if (ws_hash != block.workshare_hashes[ws_idx])
+          {
+            MERROR("Workshare hash mismatch for block " << block_hash 
+                   << ": expected " << block.workshare_hashes[ws_idx] 
+                   << ", got " << ws_hash);
+            return false;
+          }
+        }
+
         // check first block and skip all blocks if its not chained properly
         if (blockidx == 0)
         {
@@ -5068,6 +5164,33 @@ bool Blockchain::prepare_handle_incoming_blocks(const std::vector<block_complete
 
       if (!parse_and_validate_block_from_blob(it->block, block, block_hash))
         return false;
+
+      // Validate workshares match the block's workshare hashes
+      if (block.workshare_hashes.size() != it->workshares.size())
+      {
+        MERROR("Block " << block_hash << " claims " << block.workshare_hashes.size() 
+               << " workshares but sync data contains " << it->workshares.size());
+        return false;
+      }
+      
+      for (size_t ws_idx = 0; ws_idx < block.workshare_hashes.size(); ++ws_idx)
+      {
+        workshare ws;
+        if (!parse_and_validate_from_blob(it->workshares[ws_idx], ws))
+        {
+          MERROR("Failed to parse workshare " << ws_idx << " for block " << block_hash);
+          return false;
+        }
+        
+        crypto::hash ws_hash = get_workshare_hash(ws);
+        if (ws_hash != block.workshare_hashes[ws_idx])
+        {
+          MERROR("Workshare hash mismatch for block " << block_hash 
+                 << ": expected " << block.workshare_hashes[ws_idx] 
+                 << ", got " << ws_hash);
+          return false;
+        }
+      }
 
       if (have_block(block_hash))
         blocks_exist = true;

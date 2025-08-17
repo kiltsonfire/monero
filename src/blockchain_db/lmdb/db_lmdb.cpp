@@ -240,6 +240,8 @@ const char* const LMDB_ALT_BLOCKS = "alt_blocks";
 const char* const LMDB_HF_STARTING_HEIGHTS = "hf_starting_heights";
 const char* const LMDB_HF_VERSIONS = "hf_versions";
 
+const char* const LMDB_WORKSHARES_BY_PARENT = "workshares_by_parent";
+
 const char* const LMDB_PROPERTIES = "properties";
 
 const char zerokey[8] = {0};
@@ -1511,6 +1513,8 @@ void BlockchainLMDB::open(const std::string& filename, const int db_flags)
 
   lmdb_db_open(txn, LMDB_HF_VERSIONS, MDB_INTEGERKEY | MDB_CREATE, m_hf_versions, "Failed to open db handle for m_hf_versions");
 
+  lmdb_db_open(txn, LMDB_WORKSHARES_BY_PARENT, MDB_CREATE | MDB_DUPSORT | MDB_DUPFIXED, m_workshares_by_parent, "Failed to open db handle for m_workshares_by_parent");
+
   lmdb_db_open(txn, LMDB_PROPERTIES, MDB_CREATE, m_properties, "Failed to open db handle for m_properties");
 
   mdb_set_dupsort(txn, m_spent_keys, compare_hash32);
@@ -1527,6 +1531,7 @@ void BlockchainLMDB::open(const std::string& filename, const int db_flags)
   mdb_set_compare(txn, m_txpool_meta, compare_hash32);
   mdb_set_compare(txn, m_txpool_blob, compare_hash32);
   mdb_set_compare(txn, m_alt_blocks, compare_hash32);
+  mdb_set_compare(txn, m_workshares_by_parent, compare_hash32);
   mdb_set_compare(txn, m_properties, compare_string);
 
   if (!(mdb_flags & MDB_RDONLY))
@@ -5750,6 +5755,107 @@ void BlockchainLMDB::migrate(const uint32_t oldversion)
     migrate_3_4();
   if (oldversion < 5)
     migrate_4_5();
+}
+
+// Workshare storage methods
+void BlockchainLMDB::add_workshares(const crypto::hash& parent_block_hash, const std::vector<workshare>& workshares)
+{
+  LOG_PRINT_L3("BlockchainLMDB::" << __func__);
+  check_open();
+
+  mdb_txn_cursors *m_cursors = &m_wcursors;
+  
+  CURSOR(workshares_by_parent)
+  MDB_val_set(key, parent_block_hash);
+  
+  for (const auto& ws : workshares)
+  {
+    cryptonote::blobdata blob = t_serializable_object_to_blob(ws);
+    MDB_val_sized(val, blob);
+    
+    int result = mdb_cursor_put(m_cur_workshares_by_parent, &key, &val, MDB_APPENDDUP);
+    if (result)
+      throw0(DB_ERROR(lmdb_error("Failed to add workshare: ", result).c_str()));
+  }
+}
+
+std::vector<workshare> BlockchainLMDB::get_workshares(const crypto::hash& parent_block_hash) const
+{
+  LOG_PRINT_L3("BlockchainLMDB::" << __func__);
+  check_open();
+
+  std::vector<workshare> result;
+  TXN_PREFIX_RDONLY();
+  RCURSOR(workshares_by_parent);
+  
+  MDB_val_set(key, parent_block_hash);
+  MDB_val val;
+  
+  int ret = mdb_cursor_get(m_cur_workshares_by_parent, &key, &val, MDB_SET);
+  if (ret == MDB_NOTFOUND)
+    return result;
+  else if (ret)
+    throw0(DB_ERROR(lmdb_error("DB error attempting to fetch workshares: ", ret).c_str()));
+    
+  do {
+    workshare ws;
+    cryptonote::blobdata blob;
+    blob.assign(reinterpret_cast<char*>(val.mv_data), val.mv_size);
+    
+    if (!parse_and_validate_from_blob(blob, ws))
+      throw0(DB_ERROR("Failed to parse workshare from blob retrieved from the db"));
+      
+    result.push_back(ws);
+    
+    ret = mdb_cursor_get(m_cur_workshares_by_parent, &key, &val, MDB_NEXT_DUP);
+  } while (ret == 0);
+
+  TXN_POSTFIX_RDONLY();
+  return result;
+}
+
+void BlockchainLMDB::remove_workshares(const crypto::hash& parent_block_hash)
+{
+  LOG_PRINT_L3("BlockchainLMDB::" << __func__);
+  check_open();
+
+  mdb_txn_cursors *m_cursors = &m_wcursors;
+  CURSOR(workshares_by_parent)
+  
+  MDB_val_set(key, parent_block_hash);
+  MDB_val val;
+  
+  int ret = mdb_cursor_get(m_cur_workshares_by_parent, &key, &val, MDB_SET);
+  if (ret == MDB_NOTFOUND)
+    return;
+  else if (ret)
+    throw0(DB_ERROR(lmdb_error("DB error attempting to fetch workshares for removal: ", ret).c_str()));
+    
+  // Remove all workshares for this parent hash
+  do {
+    ret = mdb_cursor_del(m_cur_workshares_by_parent, 0);
+    if (ret)
+      throw0(DB_ERROR(lmdb_error("Failed to delete workshare: ", ret).c_str()));
+      
+    ret = mdb_cursor_get(m_cur_workshares_by_parent, &key, &val, MDB_NEXT_DUP);
+  } while (ret == 0);
+}
+
+bool BlockchainLMDB::workshares_exist(const crypto::hash& parent_block_hash) const
+{
+  LOG_PRINT_L3("BlockchainLMDB::" << __func__);
+  check_open();
+
+  TXN_PREFIX_RDONLY();
+  RCURSOR(workshares_by_parent);
+  
+  MDB_val_set(key, parent_block_hash);
+  MDB_val val;
+  
+  int ret = mdb_cursor_get(m_cur_workshares_by_parent, &key, &val, MDB_SET);
+  TXN_POSTFIX_RDONLY();
+  
+  return ret != MDB_NOTFOUND;
 }
 
 }  // namespace cryptonote

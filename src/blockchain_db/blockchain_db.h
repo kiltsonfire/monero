@@ -39,6 +39,7 @@
 #include "cryptonote_basic/cryptonote_basic.h"
 #include "cryptonote_basic/difficulty.h"
 #include "cryptonote_basic/hardfork.h"
+#include "cryptonote_basic/workshare.h"
 #include "cryptonote_protocol/enums.h"
 
 /** \file
@@ -1797,6 +1798,51 @@ public:
    * @brief delete hard fork info from database
    */
   virtual void drop_hard_fork_info() = 0;
+
+  //
+  // Workshare related storage
+  //
+
+  /**
+   * @brief add workshares for a block indexed by parent block hash
+   *
+   * The subclass should store the workshares indexed by their parent block hash.
+   * This allows efficient retrieval during block synchronization.
+   *
+   * @param parent_block_hash the hash of the parent block these workshares reference
+   * @param workshares the list of workshares to store
+   */
+  virtual void add_workshares(const crypto::hash& parent_block_hash, const std::vector<workshare>& workshares) = 0;
+
+  /**
+   * @brief get workshares for a given parent block hash
+   *
+   * The subclass should return all workshares that reference the given parent block hash.
+   *
+   * @param parent_block_hash the parent block hash to look up
+   *
+   * @return vector of workshares referencing the parent block
+   */
+  virtual std::vector<workshare> get_workshares(const crypto::hash& parent_block_hash) const = 0;
+
+  /**
+   * @brief remove workshares for a given parent block hash
+   *
+   * The subclass should remove all workshares indexed by the given parent block hash.
+   * This is used when removing blocks during reorganization.
+   *
+   * @param parent_block_hash the parent block hash whose workshares should be removed
+   */
+  virtual void remove_workshares(const crypto::hash& parent_block_hash) = 0;
+
+  /**
+   * @brief check if workshares exist for a given parent block hash
+   *
+   * @param parent_block_hash the parent block hash to check
+   *
+   * @return true if workshares exist for this parent hash, false otherwise
+   */
+  virtual bool workshares_exist(const crypto::hash& parent_block_hash) const = 0;
 
   /**
    * @brief return a histogram of outputs on the blockchain
