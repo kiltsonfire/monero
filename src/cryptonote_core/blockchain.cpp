@@ -5761,8 +5761,8 @@ bool Blockchain::validate_workshare_for_block(const workshare& ws, workshare_ver
   }
 
   // Validate difficulty meets minimum threshold
-  // We need to use a const version - get the current difficulty directly from DB
-  difficulty_type current_difficulty = get_next_difficulty_for_alternative_chain(get_tail_id(), std::vector<uint64_t>());
+  // Get the current block difficulty from the database
+  difficulty_type current_difficulty = m_db->height() > 0 ? m_db->get_block_difficulty(m_db->height() - 1) : 1;
   difficulty_type workshare_threshold = current_difficulty >> 7; // ~7 bits easier
   
   if (ws.workshare_difficulty < workshare_threshold)

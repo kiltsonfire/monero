@@ -32,6 +32,7 @@
 #include "cryptonote_config.h"
 #include "misc_language.h"
 #include "time_helper.h"
+#include <boost/uuid/uuid_io.hpp>
 
 #undef MONERO_DEFAULT_LOG_CATEGORY
 #define MONERO_DEFAULT_LOG_CATEGORY "workshare_pool"
@@ -92,7 +93,11 @@ namespace cryptonote
     
     // Get referenced block height for the entry
     uint64_t referenced_height = 0;
-    if (!m_blockchain.get_block_height(ws.referenced_block_id, referenced_height))
+    try
+    {
+      referenced_height = m_blockchain.get_db().get_block_height(ws.referenced_block_id);
+    }
+    catch (const std::exception&)
     {
       LOG_PRINT_L2("Workshare " << id << " references unknown block " << ws.referenced_block_id);
       tvc.m_unknown_block = true;
@@ -329,8 +334,12 @@ namespace cryptonote
     uint64_t parent_height = 0;
     uint64_t referenced_height = 0;
     
-    if (!m_blockchain.get_block_height(ws.parent_block_id, parent_height) ||
-        !m_blockchain.get_block_height(ws.referenced_block_id, referenced_height))
+    try
+    {
+      parent_height = m_blockchain.get_db().get_block_height(ws.parent_block_id);
+      referenced_height = m_blockchain.get_db().get_block_height(ws.referenced_block_id);
+    }
+    catch (const std::exception&)
     {
       LOG_PRINT_L2("Workshare " << id << " unable to get block heights for validation");
       tvc.m_verification_failed = true;
