@@ -35,4 +35,6 @@ namespace cryptonote
   class transaction;
   struct txpool_event;
   struct tx_block_template_backlog_entry;
+  struct workshare;
+  struct workshare_verification_context;
 }

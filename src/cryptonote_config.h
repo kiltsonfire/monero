@@ -216,6 +216,16 @@
 // (1+32) + (1+1+16*32) + (1+16*32) = 1060
 #define MAX_TX_EXTRA_SIZE                       1060
 
+// Workshare system constants
+#define CRYPTONOTE_WORKSHARE_DIFFICULTY_SHIFT    7      // 2^7 = 128x easier than block difficulty
+#define CRYPTONOTE_MAX_WORKSHARES_PER_BLOCK     300     // Maximum workshares per block (configurable)
+#define CRYPTONOTE_EXPECTED_WORKSHARES_PER_BLOCK 100    // Expected workshares per block
+#define CRYPTONOTE_WORKSHARE_WEIGHT_DIVISOR     100     // 100 workshares = 1 block weight
+#define CRYPTONOTE_WORKSHARE_POOL_EXPIRY_TIME   3600    // 1 hour expiry
+#define CRYPTONOTE_MAX_WORKSHARE_POOL_SIZE      10000   // Maximum pool size
+#define CRYPTONOTE_WORKSHARE_RELAY_RATE_LIMIT   10      // Per second per peer
+#define CRYPTONOTE_WORKSHARE_TIMESTAMP_TOLERANCE 3600   // ±1 hour timestamp tolerance
+
 // New constants are intended to go here
 namespace config
 {

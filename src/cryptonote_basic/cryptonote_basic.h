@@ -50,6 +50,7 @@
 #include "ringct/rctTypes.h"
 #include "device/device.hpp"
 #include "cryptonote_basic/fwd.h"
+#include "cryptonote_basic/workshare.h"
 
 namespace cryptonote
 {
@@ -512,6 +513,8 @@ namespace cryptonote
       hash_valid(b.is_hash_valid()),
       miner_tx(b.miner_tx),
       tx_hashes(b.tx_hashes),
+      workshare_hashes(b.workshare_hashes),
+      workshare_merkle_root(b.workshare_merkle_root),
       hash(b.hash)
     {}
     block(block &&b):
@@ -519,10 +522,13 @@ namespace cryptonote
       hash_valid(b.is_hash_valid()),
       miner_tx(std::move(b.miner_tx)),
       tx_hashes(std::move(b.tx_hashes)),
+      workshare_hashes(std::move(b.workshare_hashes)),
+      workshare_merkle_root(std::move(b.workshare_merkle_root)),
       hash(std::move(b.hash))
     {
       b.miner_tx.set_null();
       b.tx_hashes.clear();
+      b.workshare_hashes.clear();
     }
     block &operator=(const block &b)
     {
@@ -532,6 +538,8 @@ namespace cryptonote
         hash_valid = b.is_hash_valid();
         miner_tx = b.miner_tx;
         tx_hashes = b.tx_hashes;
+        workshare_hashes = b.workshare_hashes;
+        workshare_merkle_root = b.workshare_merkle_root;
         hash = b.hash;
       }
       return *this;
@@ -544,9 +552,12 @@ namespace cryptonote
         hash_valid = b.is_hash_valid();
         miner_tx = std::move(b.miner_tx);
         tx_hashes = std::move(b.tx_hashes);
+        workshare_hashes = std::move(b.workshare_hashes);
+        workshare_merkle_root = std::move(b.workshare_merkle_root);
         hash = std::move(b.hash);
         b.miner_tx.set_null();
         b.tx_hashes.clear();
+        b.workshare_hashes.clear();
       }
       return *this;
     }
@@ -557,6 +568,10 @@ namespace cryptonote
 
     transaction miner_tx;
     std::vector<crypto::hash> tx_hashes;
+    
+    // Workshare commitment (added for workshare system)
+    std::vector<crypto::hash> workshare_hashes;  // Hashes of included workshares
+    crypto::hash workshare_merkle_root;          // Merkle root of workshares
 
     // hash cash
     mutable crypto::hash hash;
@@ -568,7 +583,11 @@ namespace cryptonote
       FIELDS(*static_cast<block_header *>(this))
       FIELD(miner_tx)
       FIELD(tx_hashes)
+      FIELD(workshare_hashes)
+      FIELD(workshare_merkle_root)
       if (tx_hashes.size() > CRYPTONOTE_MAX_TX_PER_BLOCK)
+        return false;
+      if (workshare_hashes.size() > CRYPTONOTE_MAX_WORKSHARES_PER_BLOCK)
         return false;
     END_SERIALIZE()
   };

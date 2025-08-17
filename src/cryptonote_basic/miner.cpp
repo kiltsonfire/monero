@@ -84,6 +84,7 @@ using namespace epee;
 
 #include "miner.h"
 #include "crypto/hash.h"
+#include "workshare.h"
 
 
 extern "C" void slow_hash_allocate_state();
@@ -586,6 +587,7 @@ namespace cryptonote
 
       m_gbh(b, height, NULL, tools::get_max_concurrency(), h);
 
+      // Check for full block solution first
       if(check_hash(h, local_diff))
       {
         //we lucky!
@@ -600,6 +602,20 @@ namespace cryptonote
           //success update, lets update config
           if (!m_config_folder_path.empty())
             epee::serialization::store_t_to_json_file(m_config, m_config_folder_path + "/" + MINER_CONFIG_FILE_NAME);
+        }
+      }
+      // Check for workshare solution (sub-threshold mining)
+      else 
+      {
+        difficulty_type workshare_diff = get_workshare_difficulty(local_diff);
+        if(check_hash(h, workshare_diff))
+        {
+          workshare ws;
+          if(create_workshare_from_block(b, ws, h))
+          {
+            MDEBUG("Found workshare for difficulty: " << ws.workshare_difficulty);
+            m_phandler->handle_workshare_found(ws);
+          }
         }
       }
       nonce+=m_threads_total;
@@ -1148,5 +1164,45 @@ namespace cryptonote
     
     LOG_ERROR("couldn't query power status");
     return boost::logic::tribool(boost::logic::indeterminate);
+  }
+  //-----------------------------------------------------------------------------------------------------
+  difficulty_type miner::get_workshare_difficulty(difficulty_type block_difficulty) const
+  {
+    // Workshares are approximately 7 bits easier (divide by 128)
+    return block_difficulty >> CRYPTONOTE_WORKSHARE_DIFFICULTY_SHIFT;
+  }
+  //-----------------------------------------------------------------------------------------------------
+  bool miner::create_workshare_from_block(const block& bl, workshare& ws, const crypto::hash& hash)
+  {
+    try
+    {
+      ws.major_version = bl.major_version;
+      ws.minor_version = bl.minor_version;
+      ws.timestamp = bl.timestamp;
+      
+      // Get parent block hash from handler (critical for anti-hoarding)
+      ws.parent_block_id = m_phandler->get_parent_block_hash();
+      
+      // The block this workshare was mining for
+      ws.referenced_block_id = bl.prev_id;
+      
+      ws.nonce = bl.nonce;
+      
+      // Hash of mining address for attribution
+      ws.miner_address_hash = crypto::cn_fast_hash(&m_mine_address, sizeof(m_mine_address));
+      
+      // Set the difficulty this workshare meets
+      ws.workshare_difficulty = get_workshare_difficulty(m_diffic);
+      
+      // Set the computed hash
+      ws.set_hash(hash);
+      
+      return true;
+    }
+    catch (const std::exception& e)
+    {
+      MERROR("Failed to create workshare from block: " << e.what());
+      return false;
+    }
   }
 }

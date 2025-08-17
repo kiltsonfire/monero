@@ -39,6 +39,7 @@
 #include "math_helper.h"
 #include "syncobj.h"
 #include "cryptonote_basic/blobdatatype.h"
+#include "workshare.h"
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -49,7 +50,9 @@ namespace cryptonote
   struct i_miner_handler
   {
     virtual bool handle_block_found(block& b, block_verification_context &bvc) = 0;
+    virtual bool handle_workshare_found(const workshare& ws) = 0;
     virtual bool get_block_template(block& b, const account_public_address& adr, difficulty_type& diffic, uint64_t& height, uint64_t& expected_reward, uint64_t &cumulative_weight, const blobdata& ex_nonce, uint64_t &seed_height, crypto::hash &seed_hash) = 0;
+    virtual crypto::hash get_parent_block_hash() = 0;
   protected:
     ~i_miner_handler(){};
   };
@@ -105,6 +108,9 @@ namespace cryptonote
     static constexpr uint64_t BACKGROUND_MINING_DEFAULT_MINER_EXTRA_SLEEP_MILLIS        = 400; // ramp up 
 
   private:
+    // Workshare helper functions
+    bool create_workshare_from_block(const block& bl, workshare& ws, const crypto::hash& hash);
+    difficulty_type get_workshare_difficulty(difficulty_type block_difficulty) const;
     bool worker_thread();
     bool request_block_template();
     void  merge_hr();
