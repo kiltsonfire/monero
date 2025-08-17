@@ -30,6 +30,7 @@
 
 #include <atomic>
 #include "crypto/hash.h"
+#include "serialization/serialization.h"
 #include "serialization/keyvalue_serialization.h"
 #include "difficulty.h"
 #include "cryptonote_config.h"
@@ -130,7 +131,7 @@ namespace cryptonote
       FIELD(referenced_block_id)
       FIELD(nonce)
       FIELD(miner_address_hash)
-      FIELD(workshare_difficulty)
+      VARINT_FIELD(workshare_difficulty)
     END_SERIALIZE()
     
     bool is_hash_valid() const { return hash_valid.load(std::memory_order_acquire); }

@@ -46,6 +46,7 @@
 #include "cryptonote_config.h"
 #include "cryptonote_protocol/fwd.h"
 #include "cryptonote_protocol/levin_notify.h"
+#include "cryptonote_protocol/workshare_protocol_defs.h"
 #include "warnings.h"
 #include "net/abstract_tcp_server2.h"
 #include "net/levin_protocol_handler_async.h"
@@ -343,6 +344,7 @@ namespace nodetool
     //----------------- i_p2p_endpoint -------------------------------------------------------------
     virtual bool relay_notify_to_list(int command, epee::levin::message_writer message, std::vector<std::pair<epee::net_utils::zone, boost::uuids::uuid>> connections) final;
     virtual epee::net_utils::zone send_txs(std::vector<cryptonote::blobdata> txs, const epee::net_utils::zone origin, const boost::uuids::uuid& source, cryptonote::relay_method tx_relay);
+    virtual bool broadcast_workshare(const cryptonote::blobdata& workshare_blob, const crypto::hash& workshare_id, uint64_t current_blockchain_height) final;
     virtual bool invoke_notify_to_peer(int command, epee::levin::message_writer message, const epee::net_utils::connection_context_base& context) final;
     virtual bool drop_connection(const epee::net_utils::connection_context_base& context);
     virtual void request_callback(const epee::net_utils::connection_context_base& context);

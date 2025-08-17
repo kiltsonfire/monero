@@ -43,6 +43,7 @@
 #include "storages/levin_abstract_invoke2.h"
 #include "warnings.h"
 #include "cryptonote_protocol_defs.h"
+#include "workshare_protocol_defs.h"
 #include "cryptonote_protocol_handler_common.h"
 #include "block_queue.h"
 #include "common/perf_timer.h"
@@ -96,6 +97,12 @@ namespace cryptonote
       HANDLE_NOTIFY_T2(NOTIFY_NEW_FLUFFY_BLOCK, &cryptonote_protocol_handler::handle_notify_new_fluffy_block)			
       HANDLE_NOTIFY_T2(NOTIFY_REQUEST_FLUFFY_MISSING_TX, &cryptonote_protocol_handler::handle_request_fluffy_missing_tx)						
       HANDLE_NOTIFY_T2(NOTIFY_GET_TXPOOL_COMPLEMENT, &cryptonote_protocol_handler::handle_notify_get_txpool_complement)
+      HANDLE_NOTIFY_T2(NOTIFY_NEW_WORKSHARE, &cryptonote_protocol_handler::handle_notify_new_workshare)
+      HANDLE_NOTIFY_T2(NOTIFY_REQUEST_WORKSHARE_INVENTORY, &cryptonote_protocol_handler::handle_request_workshare_inventory)
+      HANDLE_NOTIFY_T2(NOTIFY_RESPONSE_WORKSHARE_INVENTORY, &cryptonote_protocol_handler::handle_response_workshare_inventory)
+      HANDLE_NOTIFY_T2(NOTIFY_REQUEST_WORKSHARE_DATA, &cryptonote_protocol_handler::handle_request_workshare_data)
+      HANDLE_NOTIFY_T2(NOTIFY_RESPONSE_WORKSHARE_DATA, &cryptonote_protocol_handler::handle_response_workshare_data)
+      HANDLE_NOTIFY_T2(NOTIFY_REQUEST_WORKSHARE_POOL_SYNC, &cryptonote_protocol_handler::handle_request_workshare_pool_sync)
     END_INVOKE_MAP2()
 
     bool on_idle();
@@ -144,6 +151,14 @@ namespace cryptonote
     int handle_notify_new_fluffy_block(int command, NOTIFY_NEW_FLUFFY_BLOCK::request& arg, cryptonote_connection_context& context);
     int handle_request_fluffy_missing_tx(int command, NOTIFY_REQUEST_FLUFFY_MISSING_TX::request& arg, cryptonote_connection_context& context);
     int handle_notify_get_txpool_complement(int command, NOTIFY_GET_TXPOOL_COMPLEMENT::request& arg, cryptonote_connection_context& context);
+    
+    // Workshare protocol handlers
+    int handle_notify_new_workshare(int command, NOTIFY_NEW_WORKSHARE::request& arg, cryptonote_connection_context& context);
+    int handle_request_workshare_inventory(int command, NOTIFY_REQUEST_WORKSHARE_INVENTORY::request& arg, cryptonote_connection_context& context);
+    int handle_response_workshare_inventory(int command, NOTIFY_RESPONSE_WORKSHARE_INVENTORY::request& arg, cryptonote_connection_context& context);
+    int handle_request_workshare_data(int command, NOTIFY_REQUEST_WORKSHARE_DATA::request& arg, cryptonote_connection_context& context);
+    int handle_response_workshare_data(int command, NOTIFY_RESPONSE_WORKSHARE_DATA::request& arg, cryptonote_connection_context& context);
+    int handle_request_workshare_pool_sync(int command, NOTIFY_REQUEST_WORKSHARE_POOL_SYNC::request& arg, cryptonote_connection_context& context);
 		
     //----------------- i_bc_protocol_layout ---------------------------------------
     virtual bool relay_block(NOTIFY_NEW_FLUFFY_BLOCK::request& arg, cryptonote_connection_context& exclude_context);

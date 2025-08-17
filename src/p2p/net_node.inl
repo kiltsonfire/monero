@@ -2335,6 +2335,33 @@ namespace nodetool
   }
   //-----------------------------------------------------------------------------------
   template<class t_payload_net_handler>
+  bool node_server<t_payload_net_handler>::broadcast_workshare(const cryptonote::blobdata& workshare_blob, const crypto::hash& workshare_id, uint64_t current_blockchain_height)
+  {
+    cryptonote::NOTIFY_NEW_WORKSHARE::request_t request;
+    request.workshare_blob = workshare_blob;
+    request.workshare_id = workshare_id;
+    request.current_blockchain_height = current_blockchain_height;
+
+    bool result = false;
+    for (auto& zone : m_network_zones)
+    {
+      epee::levin::message_writer msg;
+      epee::serialization::store_t_to_binary(request, msg.buffer);
+      
+      for_each_connection([&](typename t_payload_net_handler::connection_context& context, peerid_type peer_id, uint32_t support_flags) -> bool {
+        if (context.m_remote_address.get_zone() == zone.first)
+        {
+          if (invoke_notify_to_peer(cryptonote::NOTIFY_NEW_WORKSHARE::ID, std::move(msg), context))
+            result = true;
+        }
+        return true;
+      });
+    }
+    
+    return result;
+  }
+  //-----------------------------------------------------------------------------------
+  template<class t_payload_net_handler>
   void node_server<t_payload_net_handler>::callback(p2p_connection_context& context)
   {
     m_payload_handler.on_callback(context);

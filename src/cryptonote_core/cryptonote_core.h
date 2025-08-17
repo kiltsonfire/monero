@@ -38,6 +38,7 @@
 
 #include "cryptonote_basic/fwd.h"
 #include "cryptonote_core/i_core_events.h"
+#include "cryptonote_core/workshare_pool.h"
 #include "cryptonote_protocol/cryptonote_protocol_handler_common.h"
 #include "cryptonote_protocol/enums.h"
 #include "common/download.h"
@@ -228,6 +229,65 @@ namespace cryptonote
       * @return true if the block was added to the main chain, otherwise false
       */
      virtual bool handle_block_found(block& b, block_verification_context &bvc) override;
+
+     /**
+      * @brief handles a found workshare from miner
+      *
+      * @param ws the workshare found
+      *
+      * @return true if the workshare was accepted, otherwise false
+      */
+     virtual bool handle_workshare_found(const workshare& ws) override;
+
+     /**
+      * @brief gets the parent block hash for workshare validation
+      *
+      * @return the hash of the current blockchain tip (parent for new blocks)
+      */
+     virtual crypto::hash get_parent_block_hash() override;
+
+     /**
+      * @brief adds a workshare to the workshare pool
+      *
+      * @param ws the workshare to add
+      * @param id the workshare hash
+      * @param peer_id the peer that sent this workshare
+      * @param tvc verification context for results
+      *
+      * @return true if successfully added, false otherwise
+      */
+     bool add_workshare(const workshare& ws, const crypto::hash& id, 
+                        const boost::uuids::uuid& peer_id, workshare_verification_context& tvc);
+
+     /**
+      * @brief gets workshare inventory for a parent block
+      *
+      * @param parent_block_id the parent block hash
+      * @param max_count maximum number of workshares to return
+      *
+      * @return vector of workshare IDs
+      */
+     std::vector<crypto::hash> get_workshare_inventory(const crypto::hash& parent_block_id, size_t max_count = 300);
+
+     /**
+      * @brief gets a specific workshare from the pool
+      *
+      * @param id the workshare hash
+      * @param entry output parameter for the workshare entry
+      *
+      * @return true if found, false otherwise
+      */
+     bool get_workshare(const crypto::hash& id, workshare_pool_entry& entry);
+
+     /**
+      * @brief gets workshares for inclusion in a block
+      *
+      * @param parent_block_id the parent block these workshares reference
+      * @param max_count maximum number of workshares to include
+      *
+      * @return vector of workshare pool entries
+      */
+     std::vector<workshare_pool_entry> get_workshares_for_block(const crypto::hash& parent_block_id, size_t max_count = 300);
 
      /**
       * @copydoc Blockchain::create_block_template
@@ -1062,6 +1122,7 @@ namespace cryptonote
      BlockchainAndPool m_bap; //! Contains owned instances of Blockchain and tx_memory_pool
      tx_memory_pool& m_mempool; //!< ref to transaction pool instance in m_bap
      Blockchain& m_blockchain_storage; //!< ref to Blockchain instance in m_bap
+     workshare_memory_pool m_workshare_pool; //!< workshare memory pool instance
 
      i_cryptonote_protocol* m_pprotocol; //!< cryptonote protocol instance
 

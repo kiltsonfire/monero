@@ -219,6 +219,7 @@ namespace cryptonote
               m_bap(),
               m_mempool(m_bap.tx_pool),
               m_blockchain_storage(m_bap.blockchain),
+              m_workshare_pool(m_bap.blockchain),
               m_miner(this, [this](const cryptonote::block &b, uint64_t height, const crypto::hash *seed_hash, unsigned int threads, crypto::hash &hash) {
                 return cryptonote::get_block_longhash(&m_blockchain_storage, b, hash, height, seed_hash, threads);
               }),
@@ -1328,6 +1329,69 @@ namespace cryptonote
       m_pprotocol->relay_block(arg, exclude_context);
     }
     return true;
+  }
+  //-----------------------------------------------------------------------------------------------
+  bool core::handle_workshare_found(const workshare& ws)
+  {
+    // Compute workshare ID
+    crypto::hash id;
+    get_blob_hash(t_serializable_object_to_blob(ws), id);
+    
+    MINFO("Workshare found: difficulty=" << ws.workshare_difficulty 
+          << " nonce=" << ws.nonce 
+          << " timestamp=" << ws.timestamp
+          << " id=" << id);
+    
+    // Add to local pool
+    boost::uuids::uuid local_peer_id = boost::uuids::nil_uuid(); // Local workshare
+    workshare_verification_context tvc = AUTO_VAL_INIT(tvc);
+    
+    if (!add_workshare(ws, id, local_peer_id, tvc))
+    {
+      MWARNING("Failed to add locally found workshare to pool");
+      return false;
+    }
+    
+    // Broadcast to network
+    if (m_pprotocol)
+    {
+      cryptonote::blobdata workshare_blob;
+      t_serializable_object_to_blob(ws, workshare_blob);
+      
+      // Note: Direct P2P broadcast needs to be implemented properly
+      // For now, just log that we would broadcast
+      MINFO("Would broadcast workshare " << id << " to network");
+    }
+    
+    return true;
+  }
+  //-----------------------------------------------------------------------------------------------
+  crypto::hash core::get_parent_block_hash()
+  {
+    // Return the hash of the current blockchain tip
+    // This is used for workshare anti-hoarding validation
+    return m_blockchain_storage.get_tail_id();
+  }
+  //-----------------------------------------------------------------------------------------------
+  bool core::add_workshare(const workshare& ws, const crypto::hash& id, 
+                           const boost::uuids::uuid& peer_id, workshare_verification_context& tvc)
+  {
+    return m_workshare_pool.add_workshare(ws, id, peer_id, tvc);
+  }
+  //-----------------------------------------------------------------------------------------------
+  std::vector<crypto::hash> core::get_workshare_inventory(const crypto::hash& parent_block_id, size_t max_count)
+  {
+    return m_workshare_pool.get_workshare_inventory(parent_block_id, max_count);
+  }
+  //-----------------------------------------------------------------------------------------------
+  bool core::get_workshare(const crypto::hash& id, workshare_pool_entry& entry)
+  {
+    return m_workshare_pool.get_workshare(id, entry);
+  }
+  //-----------------------------------------------------------------------------------------------
+  std::vector<workshare_pool_entry> core::get_workshares_for_block(const crypto::hash& parent_block_id, size_t max_count)
+  {
+    return m_workshare_pool.get_workshares_for_parent(parent_block_id, max_count);
   }
   //-----------------------------------------------------------------------------------------------
   bool core::is_synchronized() const

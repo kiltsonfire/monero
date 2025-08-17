@@ -2871,6 +2871,161 @@ skip:
 
   //------------------------------------------------------------------------------------------------------------------------
   template<class t_core>
+  int t_cryptonote_protocol_handler<t_core>::handle_notify_new_workshare(int command, NOTIFY_NEW_WORKSHARE::request& arg, cryptonote_connection_context& context)
+  {
+    MLOG_P2P_MESSAGE("Received NOTIFY_NEW_WORKSHARE (id=" << arg.workshare_id << ")");
+    
+    if (context.m_state != cryptonote_connection_context::state_normal)
+    {
+      LOG_PRINT_CCONTEXT_L0("Received workshare in wrong state, dropping connection");
+      drop_connection(context, false, false);
+      return 1;
+    }
+    
+    // Parse the workshare
+    workshare ws;
+    if (!parse_and_validate_object_from_blob(arg.workshare_blob, ws))
+    {
+      LOG_PRINT_CCONTEXT_L0("Failed to parse workshare, dropping connection");
+      drop_connection(context, false, false);
+      return 1;
+    }
+    
+    // Add to workshare pool
+    workshare_verification_context tvc = AUTO_VAL_INIT(tvc);
+    if (!m_core.add_workshare(ws, arg.workshare_id, context.m_connection_id, tvc))
+    {
+      if (tvc.m_verification_failed)
+      {
+        LOG_PRINT_CCONTEXT_L0("Workshare verification failed, dropping connection");
+        drop_connection(context, false, false);
+        return 1;
+      }
+      // Other failures (rate limit, already exists, etc.) don't drop connection
+      return 1;
+    }
+    
+    return 1;
+  }
+
+  //------------------------------------------------------------------------------------------------------------------------
+  template<class t_core>
+  int t_cryptonote_protocol_handler<t_core>::handle_request_workshare_inventory(int command, NOTIFY_REQUEST_WORKSHARE_INVENTORY::request& arg, cryptonote_connection_context& context)
+  {
+    MLOG_P2P_MESSAGE("Received NOTIFY_REQUEST_WORKSHARE_INVENTORY (parent=" << arg.parent_block_id << ", max_count=" << arg.max_count << ")");
+    
+    if (context.m_state != cryptonote_connection_context::state_normal)
+    {
+      LOG_PRINT_CCONTEXT_L0("Received workshare inventory request in wrong state, dropping connection");
+      drop_connection(context, false, false);
+      return 1;
+    }
+    
+    NOTIFY_RESPONSE_WORKSHARE_INVENTORY::request_t response;
+    response.parent_block_id = arg.parent_block_id;
+    response.current_blockchain_height = m_core.get_current_blockchain_height();
+    
+    // Get workshare inventory from core
+    response.workshare_ids = m_core.get_workshare_inventory(arg.parent_block_id, arg.max_count);
+    
+    post_notify<NOTIFY_RESPONSE_WORKSHARE_INVENTORY>(response, context);
+    return 1;
+  }
+
+  //------------------------------------------------------------------------------------------------------------------------
+  template<class t_core>
+  int t_cryptonote_protocol_handler<t_core>::handle_response_workshare_inventory(int command, NOTIFY_RESPONSE_WORKSHARE_INVENTORY::request& arg, cryptonote_connection_context& context)
+  {
+    MLOG_P2P_MESSAGE("Received NOTIFY_RESPONSE_WORKSHARE_INVENTORY (" << arg.workshare_ids.size() << " workshares)");
+    
+    // This would be used by clients requesting workshare synchronization
+    // For now, just log the response
+    LOG_PRINT_CCONTEXT_L2("Received workshare inventory for parent " << arg.parent_block_id 
+                           << " with " << arg.workshare_ids.size() << " workshares");
+    
+    return 1;
+  }
+
+  //------------------------------------------------------------------------------------------------------------------------
+  template<class t_core>
+  int t_cryptonote_protocol_handler<t_core>::handle_request_workshare_data(int command, NOTIFY_REQUEST_WORKSHARE_DATA::request& arg, cryptonote_connection_context& context)
+  {
+    MLOG_P2P_MESSAGE("Received NOTIFY_REQUEST_WORKSHARE_DATA (" << arg.workshare_ids.size() << " workshares requested)");
+    
+    if (context.m_state != cryptonote_connection_context::state_normal)
+    {
+      LOG_PRINT_CCONTEXT_L0("Received workshare data request in wrong state, dropping connection");
+      drop_connection(context, false, false);
+      return 1;
+    }
+    
+    NOTIFY_RESPONSE_WORKSHARE_DATA::request_t response;
+    response.current_blockchain_height = m_core.get_current_blockchain_height();
+    
+    // Get requested workshares from core
+    for (const auto& id : arg.workshare_ids)
+    {
+      workshare_pool_entry entry;
+      if (m_core.get_workshare(id, entry))
+      {
+        NOTIFY_RESPONSE_WORKSHARE_DATA::workshare_entry ws_entry;
+        ws_entry.workshare_id = id;
+        t_serializable_object_to_blob(entry.ws, ws_entry.workshare_blob);
+        response.workshares.push_back(ws_entry);
+      }
+      else
+      {
+        response.missed_ids.push_back(id);
+      }
+    }
+    
+    post_notify<NOTIFY_RESPONSE_WORKSHARE_DATA>(response, context);
+    return 1;
+  }
+
+  //------------------------------------------------------------------------------------------------------------------------
+  template<class t_core>
+  int t_cryptonote_protocol_handler<t_core>::handle_response_workshare_data(int command, NOTIFY_RESPONSE_WORKSHARE_DATA::request& arg, cryptonote_connection_context& context)
+  {
+    MLOG_P2P_MESSAGE("Received NOTIFY_RESPONSE_WORKSHARE_DATA (" << arg.workshares.size() << " workshares, " 
+                      << arg.missed_ids.size() << " missed)");
+    
+    // Process received workshares
+    for (const auto& ws_entry : arg.workshares)
+    {
+      workshare ws;
+      if (parse_and_validate_object_from_blob(ws_entry.workshare_blob, ws))
+      {
+        workshare_verification_context tvc = AUTO_VAL_INIT(tvc);
+        m_core.add_workshare(ws, ws_entry.workshare_id, context.m_connection_id, tvc);
+      }
+    }
+    
+    return 1;
+  }
+
+  //------------------------------------------------------------------------------------------------------------------------
+  template<class t_core>
+  int t_cryptonote_protocol_handler<t_core>::handle_request_workshare_pool_sync(int command, NOTIFY_REQUEST_WORKSHARE_POOL_SYNC::request& arg, cryptonote_connection_context& context)
+  {
+    MLOG_P2P_MESSAGE("Received NOTIFY_REQUEST_WORKSHARE_POOL_SYNC (" << arg.known_workshares.size() << " known workshares)");
+    
+    if (context.m_state != cryptonote_connection_context::state_normal)
+    {
+      LOG_PRINT_CCONTEXT_L0("Received workshare pool sync request in wrong state, dropping connection");
+      drop_connection(context, false, false);
+      return 1;
+    }
+    
+    // For now, just acknowledge the sync request
+    // A full implementation would compare known workshares and send missing ones
+    LOG_PRINT_CCONTEXT_L2("Workshare pool sync requested with " << arg.known_workshares.size() << " known workshares");
+    
+    return 1;
+  }
+
+  //------------------------------------------------------------------------------------------------------------------------
+  template<class t_core>
   void t_cryptonote_protocol_handler<t_core>::stop()
   {
     m_stopping = true;

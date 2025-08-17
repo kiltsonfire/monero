@@ -99,6 +99,9 @@ set(unit_tests_sources
   ringdb.cpp
   wallet_storage.cpp
   wipeable_string.cpp
+  workshare_tests.cpp
+  workshare_validation_tests.cpp
+  workshare_pool_tests.cpp
   is_hdd.cpp
   aligned.cpp
   rpc_version_str.cpp
