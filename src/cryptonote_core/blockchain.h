@@ -63,6 +63,7 @@
 #include "crypto/hash.h"
 #include "checkpoints/checkpoints.h"
 #include "cryptonote_basic/hardfork.h"
+#include "cryptonote_basic/workshare.h"
 #include "blockchain_db/blockchain_db.h"
 
 namespace tools { class Notify; }
@@ -1143,6 +1144,56 @@ namespace cryptonote
      * @return current time approximated from chain data
      */
     uint64_t get_adjusted_time(uint64_t height) const;
+
+    //-----------------------------------------------------------------------------------------------
+    // Workshare support methods
+    //-----------------------------------------------------------------------------------------------
+
+    /**
+     * @brief Validate a workshare for inclusion in a block
+     * 
+     * @param ws The workshare to validate
+     * @param tvc Output verification context with detailed failure information
+     * @return true if workshare is valid for block inclusion, false otherwise
+     */
+    bool validate_workshare_for_block(const workshare& ws, workshare_verification_context& tvc) const;
+
+    /**
+     * @brief Get workshares that are valid for inclusion in the next block
+     * 
+     * Retrieves workshares from the memory pool that reference the current top block
+     * and are valid for inclusion in the next block being mined.
+     * 
+     * @param max_count Maximum number of workshares to include (default: 300)
+     * @return Vector of workshares suitable for block inclusion
+     */
+    std::vector<workshare> get_workshares_for_next_block(size_t max_count = 300) const;
+
+    /**
+     * @brief Calculate additional weight contributed by workshares in a block
+     * 
+     * Each workshare adds proportional weight to a block based on its serialized size.
+     * This is used during block validation and mining to ensure weight limits are respected.
+     * 
+     * @param workshares Vector of workshares to calculate weight for
+     * @return Additional weight in bytes contributed by the workshares
+     */
+    uint64_t calculate_workshare_weight(const std::vector<workshare>& workshares) const;
+
+    /**
+     * @brief Validate workshares included in a block during block validation
+     * 
+     * Ensures all workshares in a block meet validation criteria:
+     * - Reference the correct parent block (previous block)
+     * - Meet difficulty requirements
+     * - Don't exceed the maximum count per block (300)
+     * - Have valid timestamps and other metadata
+     * 
+     * @param bl The block containing workshares to validate
+     * @param tvc Output verification context for any validation failures
+     * @return true if all workshares are valid, false otherwise
+     */
+    bool validate_block_workshares(const block& bl, block_verification_context& tvc) const;
 
 #ifndef IN_UNIT_TESTS
   private:

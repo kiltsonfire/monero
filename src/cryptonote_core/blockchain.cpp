@@ -37,6 +37,7 @@
 
 #include "include_base_utils.h"
 #include "cryptonote_basic/cryptonote_basic_impl.h"
+#include "cryptonote_basic/workshare.h"
 #include "tx_pool.h"
 #include "blockchain.h"
 #include "blockchain_db/blockchain_db.h"
@@ -5699,6 +5700,183 @@ void Blockchain::send_miner_notifications(uint64_t height, const crypto::hash &s
   {
     notifier(major_version, height, prev_id, seed_hash, diff, median_weight, already_generated_coins, tx_backlog);
   }
+}
+
+//------------------------------------------------------------------
+// Workshare support methods
+//------------------------------------------------------------------
+bool Blockchain::validate_workshare_for_block(const workshare& ws, workshare_verification_context& tvc) const
+{
+  // Check if parent block exists and is the current top block
+  crypto::hash top_hash = get_tail_id();
+  if (ws.parent_block_id != top_hash)
+  {
+    LOG_PRINT_L2("Workshare references incorrect parent block " << ws.parent_block_id 
+                 << ", expected " << top_hash);
+    tvc.m_invalid_parent_reference = true;
+    return false;
+  }
+
+  // Check if referenced block exists
+  if (!have_block(ws.referenced_block_id))
+  {
+    LOG_PRINT_L2("Workshare references unknown block " << ws.referenced_block_id);
+    tvc.m_unknown_block = true;
+    return false;
+  }
+
+  // Validate parent-referenced relationship (parent must be exactly one block ahead)
+  uint64_t parent_height = get_current_blockchain_height();
+  uint64_t referenced_height = 0;
+  
+  try
+  {
+    referenced_height = m_db->get_block_height(ws.referenced_block_id);
+  }
+  catch (const std::exception& e)
+  {
+    LOG_PRINT_L2("Unable to get height for referenced block " << ws.referenced_block_id << ": " << e.what());
+    tvc.m_verification_failed = true;
+    return false;
+  }
+
+  if (parent_height != referenced_height + 1)
+  {
+    LOG_PRINT_L2("Invalid parent reference: parent height " << parent_height 
+                 << " should be " << (referenced_height + 1));
+    tvc.m_invalid_parent_reference = true;
+    return false;
+  }
+
+  // Validate timestamp (reasonable bounds)
+  const uint64_t current_time = static_cast<uint64_t>(std::time(nullptr));
+  const uint64_t max_timestamp_drift = 600; // 10 minutes
+  
+  if (ws.timestamp > current_time + max_timestamp_drift)
+  {
+    LOG_PRINT_L2("Workshare has timestamp too far in future: " << ws.timestamp 
+                 << " vs current " << current_time);
+    tvc.m_invalid_timestamp = true;
+    return false;
+  }
+
+  // Validate difficulty meets minimum threshold
+  // We need to use a const version - get the current difficulty directly from DB
+  difficulty_type current_difficulty = get_next_difficulty_for_alternative_chain(get_tail_id(), std::vector<uint64_t>());
+  difficulty_type workshare_threshold = current_difficulty >> 7; // ~7 bits easier
+  
+  if (ws.workshare_difficulty < workshare_threshold)
+  {
+    LOG_PRINT_L2("Workshare difficulty " << ws.workshare_difficulty 
+                 << " below threshold " << workshare_threshold);
+    tvc.m_low_difficulty = true;
+    return false;
+  }
+
+  return true;
+}
+
+//------------------------------------------------------------------
+std::vector<workshare> Blockchain::get_workshares_for_next_block(size_t max_count) const
+{
+  // This would typically involve querying the workshare pool
+  // For now, return empty vector as the pool integration will be handled in cryptonote_core
+  return std::vector<workshare>();
+}
+
+//------------------------------------------------------------------
+uint64_t Blockchain::calculate_workshare_weight(const std::vector<workshare>& workshares) const
+{
+  uint64_t total_weight = 0;
+  
+  for (const auto& ws : workshares)
+  {
+    // Calculate serialized size of workshare
+    // Each workshare contributes its serialized size to block weight
+    blobdata blob;
+    if (t_serializable_object_to_blob(ws, blob))
+    {
+      total_weight += blob.size();
+    }
+  }
+  
+  return total_weight;
+}
+
+//------------------------------------------------------------------
+bool Blockchain::validate_block_workshares(const block& bl, block_verification_context& bvc) const
+{
+  // Check maximum workshare count
+  const size_t MAX_WORKSHARES_PER_BLOCK = 300;
+  if (bl.workshare_hashes.size() > MAX_WORKSHARES_PER_BLOCK)
+  {
+    LOG_PRINT_L1("Block contains too many workshares: " << bl.workshare_hashes.size() 
+                 << " (max: " << MAX_WORKSHARES_PER_BLOCK << ")");
+    bvc.m_verifivation_failed = true;
+    return false;
+  }
+
+  // For now, we only validate the count and structure
+  // Full validation would require access to the actual workshare data
+  // which would be retrieved from the workshare pool or block data
+  
+  // Validate workshare merkle root if workshares are present
+  if (!bl.workshare_hashes.empty())
+  {
+    // Calculate expected merkle root
+    crypto::hash calculated_root = crypto::null_hash;
+    if (bl.workshare_hashes.size() == 1)
+    {
+      calculated_root = bl.workshare_hashes[0];
+    }
+    else if (bl.workshare_hashes.size() > 1)
+    {
+      // For multiple workshares, calculate merkle tree root
+      // This is a simplified implementation - production code would use proper merkle tree
+      std::vector<crypto::hash> merkle_tree = bl.workshare_hashes;
+      while (merkle_tree.size() > 1)
+      {
+        std::vector<crypto::hash> next_level;
+        for (size_t i = 0; i < merkle_tree.size(); i += 2)
+        {
+          if (i + 1 < merkle_tree.size())
+          {
+            // Hash pair of hashes together
+            crypto::hash combined;
+            crypto::cn_fast_hash((char*)&merkle_tree[i], 2 * sizeof(crypto::hash), combined);
+            next_level.push_back(combined);
+          }
+          else
+          {
+            // Odd number of hashes, duplicate the last one
+            next_level.push_back(merkle_tree[i]);
+          }
+        }
+        merkle_tree = next_level;
+      }
+      calculated_root = merkle_tree[0];
+    }
+
+    if (calculated_root != bl.workshare_merkle_root)
+    {
+      LOG_PRINT_L1("Block workshare merkle root mismatch: calculated " << calculated_root 
+                   << ", block has " << bl.workshare_merkle_root);
+      bvc.m_verifivation_failed = true;
+      return false;
+    }
+  }
+  else
+  {
+    // No workshares should mean null merkle root
+    if (bl.workshare_merkle_root != crypto::null_hash)
+    {
+      LOG_PRINT_L1("Block has no workshares but non-null merkle root: " << bl.workshare_merkle_root);
+      bvc.m_verifivation_failed = true;
+      return false;
+    }
+  }
+
+  return true;
 }
 
 namespace cryptonote {
