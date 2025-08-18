@@ -33,6 +33,7 @@
 #include "gtest/gtest.h"
 #include "cryptonote_basic/workshare.h"
 #include "cryptonote_basic/cryptonote_basic.h"
+#include "cryptonote_basic/cryptonote_format_utils.h"
 #include "cryptonote_basic/difficulty.h"
 #include "cryptonote_config.h"
 #include "crypto/hash.h"
@@ -70,11 +71,8 @@ TEST_F(WorkshareTest, DefaultConstructor)
     EXPECT_EQ(ws.major_version, 0);
     EXPECT_EQ(ws.minor_version, 0);
     EXPECT_EQ(ws.timestamp, 0);
-    EXPECT_EQ(ws.parent_block_id, crypto::null_hash);
-    EXPECT_EQ(ws.referenced_block_id, crypto::null_hash);
+    EXPECT_EQ(ws.prev_id, crypto::null_hash);
     EXPECT_EQ(ws.nonce, 0);
-    EXPECT_EQ(ws.miner_address_hash, crypto::null_hash);
-    EXPECT_EQ(ws.workshare_difficulty, 0);
     EXPECT_FALSE(ws.is_hash_valid());
     EXPECT_EQ(ws.hash, crypto::null_hash);
 }
@@ -87,21 +85,15 @@ TEST_F(WorkshareTest, FieldAssignment)
     ws.major_version = 16;
     ws.minor_version = 16;
     ws.timestamp = 1640995200; // 2022-01-01 00:00:00
-    ws.parent_block_id = test_hash_1;
-    ws.referenced_block_id = test_hash_2;
+    ws.prev_id = test_hash_1;
     ws.nonce = 12345;
-    ws.miner_address_hash = test_address_hash;
-    ws.workshare_difficulty = 1000;
     ws.set_hash(test_hash_3);
     
     EXPECT_EQ(ws.major_version, 16);
     EXPECT_EQ(ws.minor_version, 16);
     EXPECT_EQ(ws.timestamp, 1640995200);
-    EXPECT_EQ(ws.parent_block_id, test_hash_1);
-    EXPECT_EQ(ws.referenced_block_id, test_hash_2);
+    EXPECT_EQ(ws.prev_id, test_hash_1);
     EXPECT_EQ(ws.nonce, 12345);
-    EXPECT_EQ(ws.miner_address_hash, test_address_hash);
-    EXPECT_EQ(ws.workshare_difficulty, 1000);
     EXPECT_TRUE(ws.is_hash_valid());
     EXPECT_EQ(ws.hash, test_hash_3);
 }
@@ -114,11 +106,8 @@ TEST_F(WorkshareTest, CopyConstructor)
     ws1.major_version = 16;
     ws1.minor_version = 16;
     ws1.timestamp = 1640995200;
-    ws1.parent_block_id = test_hash_1;
-    ws1.referenced_block_id = test_hash_2;
+    ws1.prev_id = test_hash_1;
     ws1.nonce = 12345;
-    ws1.miner_address_hash = test_address_hash;
-    ws1.workshare_difficulty = 1000;
     ws1.set_hash(test_hash_3);
     
     workshare ws2(ws1);
@@ -126,11 +115,8 @@ TEST_F(WorkshareTest, CopyConstructor)
     EXPECT_EQ(ws2.major_version, 16);
     EXPECT_EQ(ws2.minor_version, 16);
     EXPECT_EQ(ws2.timestamp, 1640995200);
-    EXPECT_EQ(ws2.parent_block_id, test_hash_1);
-    EXPECT_EQ(ws2.referenced_block_id, test_hash_2);
+    EXPECT_EQ(ws2.prev_id, test_hash_1);
     EXPECT_EQ(ws2.nonce, 12345);
-    EXPECT_EQ(ws2.miner_address_hash, test_address_hash);
-    EXPECT_EQ(ws2.workshare_difficulty, 1000);
     EXPECT_TRUE(ws2.is_hash_valid());
     EXPECT_EQ(ws2.hash, test_hash_3);
 }
@@ -143,11 +129,8 @@ TEST_F(WorkshareTest, AssignmentOperator)
     ws1.major_version = 16;
     ws1.minor_version = 16;
     ws1.timestamp = 1640995200;
-    ws1.parent_block_id = test_hash_1;
-    ws1.referenced_block_id = test_hash_2;
+    ws1.prev_id = test_hash_1;
     ws1.nonce = 12345;
-    ws1.miner_address_hash = test_address_hash;
-    ws1.workshare_difficulty = 1000;
     ws1.set_hash(test_hash_3);
     
     workshare ws2;
@@ -156,11 +139,8 @@ TEST_F(WorkshareTest, AssignmentOperator)
     EXPECT_EQ(ws2.major_version, 16);
     EXPECT_EQ(ws2.minor_version, 16);
     EXPECT_EQ(ws2.timestamp, 1640995200);
-    EXPECT_EQ(ws2.parent_block_id, test_hash_1);
-    EXPECT_EQ(ws2.referenced_block_id, test_hash_2);
+    EXPECT_EQ(ws2.prev_id, test_hash_1);
     EXPECT_EQ(ws2.nonce, 12345);
-    EXPECT_EQ(ws2.miner_address_hash, test_address_hash);
-    EXPECT_EQ(ws2.workshare_difficulty, 1000);
     EXPECT_TRUE(ws2.is_hash_valid());
     EXPECT_EQ(ws2.hash, test_hash_3);
 }
@@ -191,11 +171,8 @@ TEST_F(WorkshareTest, SetNull)
     ws.major_version = 16;
     ws.minor_version = 16;
     ws.timestamp = 1640995200;
-    ws.parent_block_id = test_hash_1;
-    ws.referenced_block_id = test_hash_2;
+    ws.prev_id = test_hash_1;
     ws.nonce = 12345;
-    ws.miner_address_hash = test_address_hash;
-    ws.workshare_difficulty = 1000;
     ws.set_hash(test_hash_3);
     
     // Verify values are set
@@ -208,11 +185,8 @@ TEST_F(WorkshareTest, SetNull)
     EXPECT_EQ(ws.major_version, 0);
     EXPECT_EQ(ws.minor_version, 0);
     EXPECT_EQ(ws.timestamp, 0);
-    EXPECT_EQ(ws.parent_block_id, crypto::null_hash);
-    EXPECT_EQ(ws.referenced_block_id, crypto::null_hash);
+    EXPECT_EQ(ws.prev_id, crypto::null_hash);
     EXPECT_EQ(ws.nonce, 0);
-    EXPECT_EQ(ws.miner_address_hash, crypto::null_hash);
-    EXPECT_EQ(ws.workshare_difficulty, 0);
     EXPECT_FALSE(ws.is_hash_valid());
 }
 
@@ -250,30 +224,24 @@ TEST_F(WorkshareTest, Serialization)
     ws1.major_version = 16;
     ws1.minor_version = 16;
     ws1.timestamp = 1640995200;
-    ws1.parent_block_id = test_hash_1;
-    ws1.referenced_block_id = test_hash_2;
+    ws1.prev_id = test_hash_1;
     ws1.nonce = 12345;
-    ws1.miner_address_hash = test_address_hash;
-    ws1.workshare_difficulty = 1000;
     
     // Serialize
     std::string blob;
-    ASSERT_TRUE(::serialization::dump_binary(ws1, blob));
+    blob = t_serializable_object_to_blob(ws1);
     EXPECT_GT(blob.size(), 0);
     
     // Deserialize
     workshare ws2;
-    ASSERT_TRUE(::serialization::parse_binary(blob, ws2));
+    ASSERT_TRUE(parse_and_validate_from_blob(blob, ws2));
     
     // Verify fields (note: hash validation state is not serialized)
     EXPECT_EQ(ws2.major_version, ws1.major_version);
     EXPECT_EQ(ws2.minor_version, ws1.minor_version);
     EXPECT_EQ(ws2.timestamp, ws1.timestamp);
-    EXPECT_EQ(ws2.parent_block_id, ws1.parent_block_id);
-    EXPECT_EQ(ws2.referenced_block_id, ws1.referenced_block_id);
+    EXPECT_EQ(ws2.prev_id, ws1.prev_id);
     EXPECT_EQ(ws2.nonce, ws1.nonce);
-    EXPECT_EQ(ws2.miner_address_hash, ws1.miner_address_hash);
-    EXPECT_EQ(ws2.workshare_difficulty, ws1.workshare_difficulty);
 }
 
 // Test difficulty calculation (workshares should be 2^7 = 128 times easier)
@@ -311,11 +279,8 @@ TEST_F(WorkshareTest, VerificationContext)
     EXPECT_FALSE(ctx.m_verification_failed);
     EXPECT_FALSE(ctx.m_low_difficulty);
     EXPECT_FALSE(ctx.m_unknown_block);
-    EXPECT_FALSE(ctx.m_unknown_parent);
     EXPECT_FALSE(ctx.m_invalid_version);
     EXPECT_FALSE(ctx.m_invalid_timestamp);
-    EXPECT_FALSE(ctx.m_invalid_difficulty);
-    EXPECT_FALSE(ctx.m_invalid_parent_reference);
     EXPECT_FALSE(ctx.m_already_exists);
     EXPECT_FALSE(ctx.m_pool_full);
     
@@ -334,7 +299,7 @@ TEST_F(WorkshareTest, PoolEntry)
     workshare_pool_entry entry1;
     EXPECT_EQ(entry1.id, crypto::null_hash);
     EXPECT_EQ(entry1.receive_time, 0);
-    EXPECT_EQ(entry1.referenced_height, 0);
+    EXPECT_EQ(entry1.block_height, 0);
     EXPECT_FALSE(entry1.kept_by_block);
     
     // Test parameterized constructor
@@ -351,22 +316,22 @@ TEST_F(WorkshareTest, PoolEntry)
     EXPECT_EQ(entry2.ws.nonce, 12345);
     EXPECT_EQ(entry2.id, test_hash_1);
     EXPECT_EQ(entry2.receive_time, receive_time);
-    EXPECT_EQ(entry2.referenced_height, height);
+    EXPECT_EQ(entry2.block_height, height);
     EXPECT_FALSE(entry2.kept_by_block);
     
     // Test serialization
     std::string blob;
-    ASSERT_TRUE(::serialization::dump_binary(entry2, blob));
+    blob = t_serializable_object_to_blob(entry2);
     EXPECT_GT(blob.size(), 0);
     
     workshare_pool_entry entry3;
-    ASSERT_TRUE(::serialization::parse_binary(blob, entry3));
+    ASSERT_TRUE(parse_and_validate_from_blob(blob, entry3));
     
     EXPECT_EQ(entry3.ws.major_version, entry2.ws.major_version);
     EXPECT_EQ(entry3.ws.nonce, entry2.ws.nonce);
     EXPECT_EQ(entry3.id, entry2.id);
     EXPECT_EQ(entry3.receive_time, entry2.receive_time);
-    EXPECT_EQ(entry3.referenced_height, entry2.referenced_height);
+    EXPECT_EQ(entry3.block_height, entry2.block_height);
     EXPECT_EQ(entry3.kept_by_block, entry2.kept_by_block);
 }
 
@@ -415,23 +380,20 @@ TEST_F(WorkshareTest, LargeNumberHandling)
     // Test with maximum values
     ws.timestamp = std::numeric_limits<uint64_t>::max();
     ws.nonce = std::numeric_limits<uint32_t>::max();
-    ws.workshare_difficulty = std::numeric_limits<difficulty_type>::max();
     
     // Should not crash or overflow
     EXPECT_EQ(ws.timestamp, std::numeric_limits<uint64_t>::max());
     EXPECT_EQ(ws.nonce, std::numeric_limits<uint32_t>::max());
-    EXPECT_EQ(ws.workshare_difficulty, std::numeric_limits<difficulty_type>::max());
     
     // Test serialization with large values
     std::string blob;
-    ASSERT_TRUE(::serialization::dump_binary(ws, blob));
+    blob = t_serializable_object_to_blob(ws);
     
     workshare ws2;
-    ASSERT_TRUE(::serialization::parse_binary(blob, ws2));
+    ASSERT_TRUE(parse_and_validate_from_blob(blob, ws2));
     
     EXPECT_EQ(ws2.timestamp, ws.timestamp);
     EXPECT_EQ(ws2.nonce, ws.nonce);
-    EXPECT_EQ(ws2.workshare_difficulty, ws.workshare_difficulty);
 }
 
 // Test concurrent access to hash validation (basic thread safety test)

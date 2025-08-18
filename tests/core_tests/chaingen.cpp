@@ -135,6 +135,12 @@ namespace
     virtual void pop_block(cryptonote::block &blk, std::vector<cryptonote::transaction> &txs) override { if (!blocks.empty()) blocks.pop_back(); }
     virtual void set_hard_fork_version(uint64_t height, uint8_t version) override { if (height >= hf.size()) hf.resize(height + 1); hf[height] = version; }
     virtual uint8_t get_hard_fork_version(uint64_t height) const override { if (height >= hf.size()) return 255; return hf[height]; }
+    
+    // Workshare stub methods for TestDB
+    virtual void add_workshares(const crypto::hash& parent_block_id, const std::vector<cryptonote::workshare>& workshares) override {}
+    virtual std::vector<cryptonote::workshare> get_workshares(const crypto::hash& parent_block_id) const override { return {}; }
+    virtual void remove_workshares(const crypto::hash& parent_block_id) override {}
+    virtual bool workshares_exist(const crypto::hash& parent_block_id) const override { return false; }
 
   private:
     std::vector<block_t> blocks;

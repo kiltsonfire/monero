@@ -72,7 +72,7 @@ namespace cryptonote
 
     struct request_t
     {
-      crypto::hash parent_block_id;   // Request workshares for this parent block
+      crypto::hash parent_block_id;   // Request workshares that reference this block (via prev_id)
       uint64_t max_count;             // Maximum number of workshares to return
       uint64_t current_blockchain_height; // Current chain height when requested
 
@@ -95,7 +95,7 @@ namespace cryptonote
     struct request_t
     {
       std::vector<crypto::hash> workshare_ids; // List of available workshare IDs
-      crypto::hash parent_block_id;            // Parent block these workshares reference
+      crypto::hash parent_block_id;            // Block that these workshares reference (via prev_id)
       uint64_t current_blockchain_height;      // Current chain height when responded
 
       BEGIN_KV_SERIALIZE_MAP()

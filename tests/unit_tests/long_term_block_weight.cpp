@@ -91,6 +91,12 @@ public:
     return top;
   }
   virtual void pop_block(cryptonote::block &blk, std::vector<cryptonote::transaction> &txs) override { blocks.pop_back(); }
+  
+  // Workshare stub methods for TestDB
+  virtual void add_workshares(const crypto::hash& parent_block_id, const std::vector<cryptonote::workshare>& workshares) override {}
+  virtual std::vector<cryptonote::workshare> get_workshares(const crypto::hash& parent_block_id) const override { return {}; }
+  virtual void remove_workshares(const crypto::hash& parent_block_id) override {}
+  virtual bool workshares_exist(const crypto::hash& parent_block_id) const override { return false; }
 
 private:
   std::vector<block_t> blocks;

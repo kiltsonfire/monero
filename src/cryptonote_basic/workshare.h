@@ -39,31 +39,25 @@
 namespace cryptonote
 {
   /**
-   * @brief Workshare structure containing partial proof-of-work solutions
+   * @brief Workshare structure - identical to block_header
    * 
-   * Workshares represent mining work that meets a reduced difficulty threshold
+   * Workshares are exactly block headers that meet a reduced difficulty threshold
    * (~7 bits easier than full block difficulty). They provide visibility into
    * mining activity and contribute to network security measurement.
    * 
-   * CRITICAL SECURITY PROPERTY: Workshares can only be included in blocks if
-   * they reference the parent block of the including block. This prevents
-   * share hoarding attacks.
+   * Since workshares are identical to block headers, they can be produced
+   * directly from mining operations without any additional fields.
    */
   struct workshare
   {
-    // Block header compatibility fields
-    uint8_t major_version;           // Version compatibility with referenced block
-    uint8_t minor_version;           // Version compatibility with referenced block
-    uint64_t timestamp;              // Unix timestamp when workshare was created
-    crypto::hash parent_block_id;    // CRITICAL: Must reference parent of including block
-    crypto::hash referenced_block_id; // The block this workshare was mining for
-    uint32_t nonce;                  // Mining nonce that produced this workshare
+    uint8_t major_version;
+    uint8_t minor_version;
+    uint64_t timestamp;
+    crypto::hash prev_id;  // Previous block hash
+    uint32_t nonce;
+    uint32_t workshare_count;  // Number of workshares (matches block_header)
     
-    // Workshare-specific fields
-    crypto::hash miner_address_hash; // Hash of mining address for attribution
-    difficulty_type workshare_difficulty; // The difficulty this workshare meets
-    
-    // Validation cache
+    // Validation cache (not serialized)
     mutable std::atomic<bool> hash_valid;
     mutable crypto::hash hash;
     
@@ -71,11 +65,9 @@ namespace cryptonote
       major_version(0),
       minor_version(0), 
       timestamp(0),
-      parent_block_id(crypto::null_hash),
-      referenced_block_id(crypto::null_hash),
+      prev_id(crypto::null_hash),
       nonce(0),
-      miner_address_hash(crypto::null_hash),
-      workshare_difficulty(0),
+      workshare_count(0),
       hash_valid(false),
       hash(crypto::null_hash)
     {}
@@ -84,11 +76,9 @@ namespace cryptonote
       major_version(other.major_version),
       minor_version(other.minor_version),
       timestamp(other.timestamp),
-      parent_block_id(other.parent_block_id),
-      referenced_block_id(other.referenced_block_id),
+      prev_id(other.prev_id),
       nonce(other.nonce),
-      miner_address_hash(other.miner_address_hash),
-      workshare_difficulty(other.workshare_difficulty),
+      workshare_count(other.workshare_count),
       hash_valid(other.is_hash_valid()),
       hash(other.hash)
     {}
@@ -100,11 +90,9 @@ namespace cryptonote
         major_version = other.major_version;
         minor_version = other.minor_version;
         timestamp = other.timestamp;
-        parent_block_id = other.parent_block_id;
-        referenced_block_id = other.referenced_block_id;
+        prev_id = other.prev_id;
         nonce = other.nonce;
-        miner_address_hash = other.miner_address_hash;
-        workshare_difficulty = other.workshare_difficulty;
+        workshare_count = other.workshare_count;
         set_hash_valid(other.is_hash_valid());
         hash = other.hash;
       }
@@ -116,11 +104,9 @@ namespace cryptonote
       major_version = 0;
       minor_version = 0;
       timestamp = 0;
-      parent_block_id = crypto::null_hash;
-      referenced_block_id = crypto::null_hash;
+      prev_id = crypto::null_hash;
       nonce = 0;
-      miner_address_hash = crypto::null_hash;
-      workshare_difficulty = 0;
+      workshare_count = 0;
       invalidate_hashes();
     }
     
@@ -128,11 +114,9 @@ namespace cryptonote
       VARINT_FIELD(major_version)
       VARINT_FIELD(minor_version)
       VARINT_FIELD(timestamp)
-      FIELD(parent_block_id)
-      FIELD(referenced_block_id)
+      FIELD(prev_id)
       FIELD(nonce)
-      FIELD(miner_address_hash)
-      FIELD(workshare_difficulty)
+      VARINT_FIELD(workshare_count)
     END_SERIALIZE()
     
     bool is_hash_valid() const { return hash_valid.load(std::memory_order_acquire); }
@@ -151,12 +135,9 @@ namespace cryptonote
   {
     bool m_verification_failed;     // General validation failure
     bool m_low_difficulty;          // Hash doesn't meet required difficulty
-    bool m_unknown_block;           // Referenced block not found
-    bool m_unknown_parent;          // Parent block not found
-    bool m_invalid_version;         // Version mismatch with referenced block
+    bool m_unknown_block;           // Previous block not found
+    bool m_invalid_version;         // Invalid version
     bool m_invalid_timestamp;       // Timestamp outside acceptable range
-    bool m_invalid_difficulty;      // Incorrect difficulty calculation
-    bool m_invalid_parent_reference; // Parent reference validation failed
     bool m_already_exists;          // Workshare already in pool
     bool m_pool_full;               // Workshare pool at capacity
     
@@ -164,11 +145,8 @@ namespace cryptonote
       m_verification_failed(false),
       m_low_difficulty(false),
       m_unknown_block(false),
-      m_unknown_parent(false),
       m_invalid_version(false),
       m_invalid_timestamp(false),
-      m_invalid_difficulty(false),
-      m_invalid_parent_reference(false),
       m_already_exists(false),
       m_pool_full(false)
     {}
@@ -182,25 +160,25 @@ namespace cryptonote
    */
   struct workshare_pool_entry
   {
-    workshare ws;                   // The workshare data
-    crypto::hash id;               // SHA3-256 hash of workshare
+    workshare ws;                   // The workshare data (identical to block_header)
+    crypto::hash id;               // Hash of workshare
     uint64_t receive_time;         // Unix timestamp when received
-    uint64_t referenced_height;    // Height of referenced block
+    uint64_t block_height;         // Height of the block this workshare references
     bool kept_by_block;            // True if included in a block
     
     workshare_pool_entry():
       ws(),
       id(crypto::null_hash),
       receive_time(0),
-      referenced_height(0),
+      block_height(0),
       kept_by_block(false)
     {}
     
-    workshare_pool_entry(const workshare& _ws, const crypto::hash& _id, uint64_t _receive_time, uint64_t _referenced_height):
+    workshare_pool_entry(const workshare& _ws, const crypto::hash& _id, uint64_t _receive_time, uint64_t _block_height):
       ws(_ws),
       id(_id),
       receive_time(_receive_time),
-      referenced_height(_referenced_height),
+      block_height(_block_height),
       kept_by_block(false)
     {}
     
@@ -208,7 +186,7 @@ namespace cryptonote
       FIELD(ws)
       FIELD(id)
       VARINT_FIELD(receive_time)
-      VARINT_FIELD(referenced_height)
+      VARINT_FIELD(block_height)
       FIELD(kept_by_block)
     END_SERIALIZE()
   };

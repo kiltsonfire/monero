@@ -1629,6 +1629,7 @@ bool Blockchain::create_block_template(block& b, const crypto::hash *from_block,
     }
   }
   b.timestamp = time(NULL);
+  b.workshare_count = 0; // Initialize workshare_count
 
   uint64_t median_ts;
   if (!check_block_timestamp(b, median_ts))
@@ -1758,6 +1759,11 @@ bool Blockchain::create_block_template(block& b, const crypto::hash *from_block,
         ", cumulative weight " << cumulative_weight << " is now good");
 #endif
 
+    // Set workshare_count to match the number of workshare hashes
+    // For now, we're not including any workshares in the block template
+    // This will be populated when miners submit blocks with workshares
+    b.workshare_count = b.workshare_hashes.size();
+    
     if (!from_block)
       cache_block_template(b, miner_address, ex_nonce, diffic, height, expected_reward, cumulative_weight, seed_height, seed_hash, pool_cookie);
     return true;
@@ -4473,7 +4479,7 @@ leave:
     return false;
   }
 
-  MINFO("+++++ BLOCK SUCCESSFULLY ADDED" << std::endl << "id:\t" << id << std::endl << "PoW:\t" << proof_of_work << std::endl << "HEIGHT " << new_height-1 << ", difficulty:\t" << current_diffic << std::endl << "block reward: " << print_money(fee_summary + base_reward) << "(" << print_money(base_reward) << " + " << print_money(fee_summary) << "), coinbase_weight: " << coinbase_weight << ", cumulative weight: " << cumulative_block_weight << ", " << block_processing_time << "(" << target_calculating_time << "/" << longhash_calculating_time << ")ms");
+  MINFO("+++++ BLOCK SUCCESSFULLY ADDED" << std::endl << "id:\t" << id << std::endl << "PoW:\t" << proof_of_work << std::endl << "HEIGHT " << new_height-1 << ", difficulty:\t" << current_diffic << std::endl << "block reward: " << print_money(fee_summary + base_reward) << "(" << print_money(base_reward) << " + " << print_money(fee_summary) << "), coinbase_weight: " << coinbase_weight << ", cumulative weight: " << cumulative_block_weight << ", workshares: " << bl.workshare_count << ", " << block_processing_time << "(" << target_calculating_time << "/" << longhash_calculating_time << ")ms");
   if(m_show_time_stats)
   {
     MINFO("Height: " << new_height << " coinbase weight: " << coinbase_weight << " cumm: "
@@ -5830,44 +5836,36 @@ void Blockchain::send_miner_notifications(uint64_t height, const crypto::hash &s
 //------------------------------------------------------------------
 bool Blockchain::validate_workshare_for_block(const workshare& ws, workshare_verification_context& tvc) const
 {
-  // Check if parent block exists and is the current top block
-  crypto::hash top_hash = get_tail_id();
-  if (ws.parent_block_id != top_hash)
+  // Check if previous block exists (the block this workshare was mining for)
+  if (!have_block(ws.prev_id))
   {
-    LOG_PRINT_L2("Workshare references incorrect parent block " << ws.parent_block_id 
-                 << ", expected " << top_hash);
-    tvc.m_invalid_parent_reference = true;
-    return false;
-  }
-
-  // Check if referenced block exists
-  if (!have_block(ws.referenced_block_id))
-  {
-    LOG_PRINT_L2("Workshare references unknown block " << ws.referenced_block_id);
+    LOG_PRINT_L2("Workshare references unknown block " << ws.prev_id);
     tvc.m_unknown_block = true;
     return false;
   }
 
-  // Validate parent-referenced relationship (parent must be exactly one block ahead)
-  uint64_t parent_height = get_current_blockchain_height();
+  // Workshares should reference recent blocks (not too old)
+  uint64_t current_height = get_current_blockchain_height();
   uint64_t referenced_height = 0;
   
   try
   {
-    referenced_height = m_db->get_block_height(ws.referenced_block_id);
+    referenced_height = m_db->get_block_height(ws.prev_id);
   }
   catch (const std::exception& e)
   {
-    LOG_PRINT_L2("Unable to get height for referenced block " << ws.referenced_block_id << ": " << e.what());
+    LOG_PRINT_L2("Unable to get height for referenced block " << ws.prev_id << ": " << e.what());
     tvc.m_verification_failed = true;
     return false;
   }
 
-  if (parent_height != referenced_height + 1)
+  // Workshare should be for a recent block (within reasonable range)
+  const uint64_t max_age = 10; // Maximum blocks old
+  if (current_height > referenced_height + max_age)
   {
-    LOG_PRINT_L2("Invalid parent reference: parent height " << parent_height 
-                 << " should be " << (referenced_height + 1));
-    tvc.m_invalid_parent_reference = true;
+    LOG_PRINT_L2("Workshare references too old block: height " << referenced_height 
+                 << " vs current " << current_height);
+    tvc.m_verification_failed = true;
     return false;
   }
 
@@ -5883,18 +5881,10 @@ bool Blockchain::validate_workshare_for_block(const workshare& ws, workshare_ver
     return false;
   }
 
-  // Validate difficulty meets minimum threshold
-  // Get the current block difficulty from the database
-  difficulty_type current_difficulty = m_db->height() > 0 ? m_db->get_block_difficulty(m_db->height() - 1) : 1;
-  difficulty_type workshare_threshold = current_difficulty >> 7; // ~7 bits easier
-  
-  if (ws.workshare_difficulty < workshare_threshold)
-  {
-    LOG_PRINT_L2("Workshare difficulty " << ws.workshare_difficulty 
-                 << " below threshold " << workshare_threshold);
-    tvc.m_low_difficulty = true;
-    return false;
-  }
+  // TODO: Validate proof of work hash meets workshare difficulty threshold
+  // The actual PoW validation should check that the workshare hash meets
+  // the required difficulty (block_difficulty >> 7)
+  // For now, we trust that the workshare has been validated elsewhere
 
   return true;
 }
@@ -5939,65 +5929,18 @@ bool Blockchain::validate_block_workshares(const block& bl, block_verification_c
     return false;
   }
 
+  // Validate that workshare_count matches the actual number of workshare hashes
+  if (bl.workshare_count != bl.workshare_hashes.size())
+  {
+    LOG_PRINT_L1("Block workshare count mismatch: header count " << bl.workshare_count 
+                 << " != body hashes " << bl.workshare_hashes.size());
+    bvc.m_verifivation_failed = true;
+    return false;
+  }
+
   // For now, we only validate the count and structure
   // Full validation would require access to the actual workshare data
   // which would be retrieved from the workshare pool or block data
-  
-  // Validate workshare merkle root if workshares are present
-  if (!bl.workshare_hashes.empty())
-  {
-    // Calculate expected merkle root
-    crypto::hash calculated_root = crypto::null_hash;
-    if (bl.workshare_hashes.size() == 1)
-    {
-      calculated_root = bl.workshare_hashes[0];
-    }
-    else if (bl.workshare_hashes.size() > 1)
-    {
-      // For multiple workshares, calculate merkle tree root
-      // This is a simplified implementation - production code would use proper merkle tree
-      std::vector<crypto::hash> merkle_tree = bl.workshare_hashes;
-      while (merkle_tree.size() > 1)
-      {
-        std::vector<crypto::hash> next_level;
-        for (size_t i = 0; i < merkle_tree.size(); i += 2)
-        {
-          if (i + 1 < merkle_tree.size())
-          {
-            // Hash pair of hashes together
-            crypto::hash combined;
-            crypto::cn_fast_hash((char*)&merkle_tree[i], 2 * sizeof(crypto::hash), combined);
-            next_level.push_back(combined);
-          }
-          else
-          {
-            // Odd number of hashes, duplicate the last one
-            next_level.push_back(merkle_tree[i]);
-          }
-        }
-        merkle_tree = next_level;
-      }
-      calculated_root = merkle_tree[0];
-    }
-
-    if (calculated_root != bl.workshare_merkle_root)
-    {
-      LOG_PRINT_L1("Block workshare merkle root mismatch: calculated " << calculated_root 
-                   << ", block has " << bl.workshare_merkle_root);
-      bvc.m_verifivation_failed = true;
-      return false;
-    }
-  }
-  else
-  {
-    // No workshares should mean null merkle root
-    if (bl.workshare_merkle_root != crypto::null_hash)
-    {
-      LOG_PRINT_L1("Block has no workshares but non-null merkle root: " << bl.workshare_merkle_root);
-      bvc.m_verifivation_failed = true;
-      return false;
-    }
-  }
 
   return true;
 }

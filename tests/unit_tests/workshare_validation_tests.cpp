@@ -34,6 +34,7 @@
 #include "gtest/gtest.h"
 #include "cryptonote_basic/workshare.h"
 #include "cryptonote_basic/cryptonote_basic.h"
+#include "cryptonote_basic/cryptonote_format_utils.h"
 #include "cryptonote_basic/difficulty.h"
 #include "cryptonote_config.h"
 #include "crypto/hash.h"
@@ -57,14 +58,12 @@ protected:
         valid_workshare.major_version = 16;
         valid_workshare.minor_version = 16;
         valid_workshare.timestamp = get_current_timestamp();
-        valid_workshare.parent_block_id = valid_parent_hash;
-        valid_workshare.referenced_block_id = valid_block_hash;
+        valid_workshare.prev_id = valid_block_hash;
         valid_workshare.nonce = 12345;
-        valid_workshare.miner_address_hash = test_miner_hash;
-        valid_workshare.workshare_difficulty = 1000;
         
         // Set a valid hash that would meet the difficulty
-        create_hash_for_difficulty(valid_workshare.workshare_difficulty, valid_hash);
+        difficulty_type test_difficulty = 1000;
+        create_hash_for_difficulty(test_difficulty, valid_hash);
         valid_workshare.set_hash(valid_hash);
     }
     
@@ -131,34 +130,26 @@ TEST_F(WorkshareValidationTest, BasicStructureValidation)
     EXPECT_GT(ws.major_version, 0);
     EXPECT_GE(ws.minor_version, 0);
     EXPECT_GT(ws.timestamp, 0);
-    EXPECT_NE(ws.parent_block_id, crypto::null_hash);
-    EXPECT_NE(ws.referenced_block_id, crypto::null_hash);
-    EXPECT_GT(ws.workshare_difficulty, 0);
-    EXPECT_NE(ws.miner_address_hash, crypto::null_hash);
+    EXPECT_NE(ws.prev_id, crypto::null_hash);
     EXPECT_TRUE(ws.is_hash_valid());
 }
 
-// Test parent block reference validation (anti-hoarding mechanism)
-TEST_F(WorkshareValidationTest, ParentBlockReferenceValidation)
+// Test previous block reference validation
+TEST_F(WorkshareValidationTest, PreviousBlockReferenceValidation)
 {
     workshare ws = valid_workshare;
     
-    // Valid case: parent_block_id properly set
-    EXPECT_NE(ws.parent_block_id, crypto::null_hash);
-    EXPECT_NE(ws.parent_block_id, ws.referenced_block_id); // Should be different
+    // Valid case: prev_id properly set
+    EXPECT_NE(ws.prev_id, crypto::null_hash);
     
-    // Invalid case: null parent reference
-    ws.parent_block_id = crypto::null_hash;
+    // Invalid case: null previous reference
+    ws.prev_id = crypto::null_hash;
     // This should be caught by validation logic (would need validation function)
-    EXPECT_EQ(ws.parent_block_id, crypto::null_hash);
+    EXPECT_EQ(ws.prev_id, crypto::null_hash);
     
-    // Invalid case: parent equals referenced block (not allowed)
-    ws.parent_block_id = ws.referenced_block_id;
-    EXPECT_EQ(ws.parent_block_id, ws.referenced_block_id);
-    
-    // Valid case: different parent and referenced blocks
-    ws.parent_block_id = different_parent_hash;
-    EXPECT_NE(ws.parent_block_id, ws.referenced_block_id);
+    // Valid case: different previous block
+    ws.prev_id = different_parent_hash;
+    EXPECT_NE(ws.prev_id, crypto::null_hash);
 }
 
 // Test difficulty validation
@@ -210,16 +201,14 @@ TEST_F(WorkshareValidationTest, HashDifficultyValidation)
     
     // Test with workshare
     workshare ws_good = valid_workshare;
-    ws_good.workshare_difficulty = test_difficulty;
     ws_good.set_hash(good_hash);
     
     workshare ws_bad = valid_workshare;
-    ws_bad.workshare_difficulty = test_difficulty;
     ws_bad.set_hash(bad_hash);
     
     // These would need actual validation function to test fully
-    EXPECT_TRUE(cryptonote::check_hash(ws_good.hash, ws_good.workshare_difficulty));
-    EXPECT_FALSE(cryptonote::check_hash(ws_bad.hash, ws_bad.workshare_difficulty));
+    EXPECT_TRUE(cryptonote::check_hash(ws_good.hash, test_difficulty));
+    EXPECT_FALSE(cryptonote::check_hash(ws_bad.hash, test_difficulty));
 }
 
 // Test timestamp validation
@@ -333,33 +322,28 @@ TEST_F(WorkshareValidationTest, WorkshareLimitsValidation)
     EXPECT_LT(workshare_weight, 10); // Should be reasonable weight
 }
 
-// Test anti-hoarding mechanism validation
-TEST_F(WorkshareValidationTest, AntiHoardingValidation)
+// Test previous block reference validation
+TEST_F(WorkshareValidationTest, PrevBlockValidation)
 {
     workshare ws = valid_workshare;
     
-    // Valid case: parent_block_id != referenced_block_id
-    EXPECT_NE(ws.parent_block_id, ws.referenced_block_id);
+    // Valid case: prev_id is set
+    EXPECT_NE(ws.prev_id, crypto::null_hash);
     
-    // Invalid case: trying to use same block for both
-    crypto::hash same_hash;
-    memset(&same_hash, 0x99, sizeof(same_hash));
+    // Test changing to different hash
+    crypto::hash different_hash;
+    memset(&different_hash, 0x99, sizeof(different_hash));
     
-    ws.parent_block_id = same_hash;
-    ws.referenced_block_id = same_hash;
-    EXPECT_EQ(ws.parent_block_id, ws.referenced_block_id); // This should be rejected
+    ws.prev_id = different_hash;
+    EXPECT_EQ(ws.prev_id, different_hash);
     
-    // Valid case: proper parent-child relationship
-    ws.parent_block_id = valid_parent_hash;
-    ws.referenced_block_id = valid_block_hash; 
-    EXPECT_NE(ws.parent_block_id, ws.referenced_block_id);
+    // Test that null hash would be invalid
+    ws.prev_id = crypto::null_hash;
+    EXPECT_EQ(ws.prev_id, crypto::null_hash); // Should be rejected in validation
     
-    // Test that null hashes are invalid
-    ws.parent_block_id = crypto::null_hash;
-    EXPECT_EQ(ws.parent_block_id, crypto::null_hash); // Should be rejected
-    
-    ws.referenced_block_id = crypto::null_hash;
-    EXPECT_EQ(ws.referenced_block_id, crypto::null_hash); // Should be rejected
+    // Restore valid hash
+    ws.prev_id = valid_block_hash;
+    EXPECT_NE(ws.prev_id, crypto::null_hash);
 }
 
 // Test verification context comprehensive scenarios
@@ -379,11 +363,11 @@ TEST_F(WorkshareValidationTest, VerificationContextScenarios)
     EXPECT_TRUE(ctx.m_unknown_block);
     EXPECT_TRUE(ctx.m_verification_failed);
     
-    // Test invalid parent reference scenario
+    // Test invalid version scenario
     ctx = workshare_verification_context(); // Reset
-    ctx.m_invalid_parent_reference = true;
+    ctx.m_invalid_version = true;
     ctx.m_verification_failed = true;
-    EXPECT_TRUE(ctx.m_invalid_parent_reference);
+    EXPECT_TRUE(ctx.m_invalid_version);
     EXPECT_TRUE(ctx.m_verification_failed);
     
     // Test timestamp validation scenario
@@ -425,26 +409,26 @@ TEST_F(WorkshareValidationTest, EdgeCases)
 {
     // Test with minimum valid difficulty
     workshare ws = valid_workshare;
-    ws.workshare_difficulty = 1;
+    difficulty_type test_diff = 1;
     
     crypto::hash min_diff_hash;
     create_hash_for_difficulty(1, min_diff_hash);
     ws.set_hash(min_diff_hash);
     
-    EXPECT_EQ(ws.workshare_difficulty, 1);
-    EXPECT_TRUE(cryptonote::check_hash(ws.hash, ws.workshare_difficulty));
+    EXPECT_EQ(test_diff, 1);
+    EXPECT_TRUE(cryptonote::check_hash(ws.hash, test_diff));
     
     // Test with zero difficulty (should be invalid)
-    ws.workshare_difficulty = 0;
+    test_diff = 0;
     // Hash check with zero difficulty would be problematic
-    EXPECT_EQ(ws.workshare_difficulty, 0);
+    EXPECT_EQ(test_diff, 0);
     
     // Test with maximum difficulty
-    ws.workshare_difficulty = std::numeric_limits<difficulty_type>::max();
-    EXPECT_EQ(ws.workshare_difficulty, std::numeric_limits<difficulty_type>::max());
+    test_diff = std::numeric_limits<difficulty_type>::max();
+    EXPECT_EQ(test_diff, std::numeric_limits<difficulty_type>::max());
     
     // Most hashes won't meet max difficulty, but structure should be valid
-    EXPECT_GT(ws.workshare_difficulty, 0);
+    EXPECT_GT(test_diff, 0);
 }
 
 // Test serialization edge cases for validation
@@ -456,44 +440,37 @@ TEST_F(WorkshareValidationTest, SerializationValidation)
     ws.minor_version = 255;
     ws.timestamp = std::numeric_limits<uint64_t>::max();
     ws.nonce = std::numeric_limits<uint32_t>::max();
-    ws.workshare_difficulty = std::numeric_limits<difficulty_type>::max();
     
-    // Fill hashes with max values
-    memset(&ws.parent_block_id, 0xFF, sizeof(ws.parent_block_id));
-    memset(&ws.referenced_block_id, 0xFF, sizeof(ws.referenced_block_id));
-    memset(&ws.miner_address_hash, 0xFF, sizeof(ws.miner_address_hash));
+    // Fill hash with max values
+    memset(&ws.prev_id, 0xFF, sizeof(ws.prev_id));
     
     std::string blob;
-    ASSERT_TRUE(::serialization::dump_binary(ws, blob));
+    blob = t_serializable_object_to_blob(ws);
     EXPECT_GT(blob.size(), 0);
     
     workshare ws2;
-    ASSERT_TRUE(::serialization::parse_binary(blob, ws2));
+    ASSERT_TRUE(parse_and_validate_from_blob(blob, ws2));
     
     // Verify all extreme values survived serialization
     EXPECT_EQ(ws2.major_version, 255);
     EXPECT_EQ(ws2.minor_version, 255);
     EXPECT_EQ(ws2.timestamp, std::numeric_limits<uint64_t>::max());
     EXPECT_EQ(ws2.nonce, std::numeric_limits<uint32_t>::max());
-    EXPECT_EQ(ws2.workshare_difficulty, std::numeric_limits<difficulty_type>::max());
     
-    // Verify hashes
-    EXPECT_EQ(ws2.parent_block_id, ws.parent_block_id);
-    EXPECT_EQ(ws2.referenced_block_id, ws.referenced_block_id);
-    EXPECT_EQ(ws2.miner_address_hash, ws.miner_address_hash);
+    // Verify hash
+    EXPECT_EQ(ws2.prev_id, ws.prev_id);
     
     // Test empty/minimal serialization
     workshare ws_min;
-    ASSERT_TRUE(::serialization::dump_binary(ws_min, blob));
+    blob = t_serializable_object_to_blob(ws_min);
     EXPECT_GT(blob.size(), 0);
     
     workshare ws_min2;
-    ASSERT_TRUE(::serialization::parse_binary(blob, ws_min2));
+    ASSERT_TRUE(parse_and_validate_from_blob(blob, ws_min2));
     
     // Should match default values
     EXPECT_EQ(ws_min2.major_version, 0);
     EXPECT_EQ(ws_min2.minor_version, 0);
     EXPECT_EQ(ws_min2.timestamp, 0);
     EXPECT_EQ(ws_min2.nonce, 0);
-    EXPECT_EQ(ws_min2.workshare_difficulty, 0);
 }

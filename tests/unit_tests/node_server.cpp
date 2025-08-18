@@ -102,6 +102,13 @@ public:
   bool get_pool_transaction_hashes(std::vector<crypto::hash>& txs, bool include_unrelayed_txes = true) const { return false; }
   crypto::hash get_block_id_by_height(uint64_t height) const { return crypto::null_hash; }
   void stop() {}
+  
+  // Workshare stub methods for test_core
+  bool handle_workshare_found(const cryptonote::workshare& ws) { return true; }
+  crypto::hash get_parent_block_hash() const { return crypto::null_hash; }
+  bool add_workshare(const cryptonote::workshare& ws, const crypto::hash& ws_id, const boost::uuids::uuid& source_peer, cryptonote::workshare_verification_context& tvc) { return true; }
+  std::vector<crypto::hash> get_workshare_inventory(const crypto::hash& parent_block_id, size_t max_count) const { return {}; }
+  bool get_workshare(const crypto::hash& ws_id, cryptonote::workshare_pool_entry& entry) const { return false; }
 };
 
 typedef nodetool::node_server<cryptonote::t_cryptonote_protocol_handler<test_core>> Server;
@@ -671,6 +678,9 @@ TEST(cryptonote_protocol_handler, race_condition)
     virtual void request_callback(const contexts::basic &context) override {
       if (shared_state)
         shared_state->request_callback(context.m_connection_id);
+    }
+    virtual bool broadcast_workshare(const cryptonote::blobdata& workshare_blob, const crypto::hash& workshare_id, uint64_t current_blockchain_height) override {
+      return true;
     }
   };
   auto conduct_handshake = [get_conn_tag](net_node_t &net_node, connection_ptr conn){

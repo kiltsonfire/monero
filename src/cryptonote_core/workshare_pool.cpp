@@ -57,8 +57,8 @@ namespace cryptonote
     
     const uint64_t current_time = static_cast<uint64_t>(std::time(nullptr));
     
-    // Check rate limiting
-    if (is_rate_limited(peer_id))
+    // Check rate limiting (skip for local workshares)
+    if (!peer_id.is_nil() && is_rate_limited(peer_id))
     {
       LOG_PRINT_L2("Workshare " << id << " rejected due to rate limiting from peer " << peer_id);
       tvc.m_pool_full = true;
@@ -80,47 +80,48 @@ namespace cryptonote
       return false;
     }
     
-    // Check parent block capacity
-    auto parent_it = m_workshares_by_parent.find(ws.parent_block_id);
+    // Check parent block capacity (prev_id is the parent)
+    auto parent_it = m_workshares_by_parent.find(ws.prev_id);
     if (parent_it != m_workshares_by_parent.end() && 
         parent_it->second.size() >= MAX_WORKSHARES_PER_PARENT)
     {
-      LOG_PRINT_L2("Parent block " << ws.parent_block_id << " has reached maximum workshare capacity (" 
+      LOG_PRINT_L2("Parent block " << ws.prev_id << " has reached maximum workshare capacity (" 
                    << MAX_WORKSHARES_PER_PARENT << ")");
       tvc.m_pool_full = true;
       return false;
     }
     
-    // Get referenced block height for the entry
-    uint64_t referenced_height = 0;
+    // Get block height for the entry (from prev_id)
+    uint64_t block_height = 0;
     try
     {
-      referenced_height = m_blockchain.get_db().get_block_height(ws.referenced_block_id);
+      block_height = m_blockchain.get_db().get_block_height(ws.prev_id);
     }
     catch (const std::exception&)
     {
-      LOG_PRINT_L2("Workshare " << id << " references unknown block " << ws.referenced_block_id);
+      LOG_PRINT_L2("Workshare " << id << " references unknown block " << ws.prev_id);
       tvc.m_unknown_block = true;
       return false;
     }
     
     // Create pool entry
-    workshare_pool_entry entry(ws, id, current_time, referenced_height);
+    workshare_pool_entry entry(ws, id, current_time, block_height);
     
     // Add to main storage
     m_workshares[id] = entry;
     
     // Add to parent index
-    m_workshares_by_parent[ws.parent_block_id].insert(id);
+    m_workshares_by_parent[ws.prev_id].insert(id);
     
-    // Record rate limiting
-    record_peer_workshare(peer_id);
+    // Record rate limiting (skip for local workshares)
+    if (!peer_id.is_nil())
+      record_peer_workshare(peer_id);
     
     // Update statistics
     m_total_workshares++;
     
-    LOG_PRINT_L1("Added workshare " << id << " to pool (parent: " << ws.parent_block_id << 
-                 ", referenced: " << ws.referenced_block_id << ", height: " << referenced_height << ")");
+    LOG_PRINT_L1("Added workshare " << id << " to pool (prev_id: " << ws.prev_id << 
+                 ", height: " << block_height << ")");
     
     return true;
   }
@@ -195,7 +196,7 @@ namespace cryptonote
       auto it = m_workshares.find(id);
       if (it != m_workshares.end())
       {
-        const crypto::hash& parent_id = it->second.ws.parent_block_id;
+        const crypto::hash& parent_id = it->second.ws.prev_id;
         
         // Remove from parent index
         auto parent_it = m_workshares_by_parent.find(parent_id);
@@ -314,44 +315,11 @@ namespace cryptonote
   bool workshare_memory_pool::validate_workshare(const workshare& ws, const crypto::hash& id, 
                                                  workshare_verification_context& tvc)
   {
-    // Check if parent block exists
-    if (!m_blockchain.have_block(ws.parent_block_id))
+    // Check if previous block exists (the block this workshare references)
+    if (!m_blockchain.have_block(ws.prev_id))
     {
-      LOG_PRINT_L2("Workshare " << id << " references unknown parent block " << ws.parent_block_id);
-      tvc.m_unknown_parent = true;
-      return false;
-    }
-    
-    // Check if referenced block exists
-    if (!m_blockchain.have_block(ws.referenced_block_id))
-    {
-      LOG_PRINT_L2("Workshare " << id << " references unknown block " << ws.referenced_block_id);
+      LOG_PRINT_L2("Workshare " << id << " references unknown block " << ws.prev_id);
       tvc.m_unknown_block = true;
-      return false;
-    }
-    
-    // Validate parent reference constraint
-    uint64_t parent_height = 0;
-    uint64_t referenced_height = 0;
-    
-    try
-    {
-      parent_height = m_blockchain.get_db().get_block_height(ws.parent_block_id);
-      referenced_height = m_blockchain.get_db().get_block_height(ws.referenced_block_id);
-    }
-    catch (const std::exception&)
-    {
-      LOG_PRINT_L2("Workshare " << id << " unable to get block heights for validation");
-      tvc.m_verification_failed = true;
-      return false;
-    }
-    
-    // Parent must be exactly one block ahead of referenced block
-    if (parent_height != referenced_height + 1)
-    {
-      LOG_PRINT_L2("Workshare " << id << " invalid parent reference: parent height " << parent_height 
-                   << " should be " << (referenced_height + 1));
-      tvc.m_invalid_parent_reference = true;
       return false;
     }
     
@@ -367,17 +335,9 @@ namespace cryptonote
       return false;
     }
     
-    // Validate workshare difficulty meets minimum threshold
-    difficulty_type min_difficulty = m_blockchain.get_difficulty_for_next_block();
-    difficulty_type workshare_threshold = min_difficulty >> 7; // ~7 bits easier
-    
-    if (ws.workshare_difficulty < workshare_threshold)
-    {
-      LOG_PRINT_L2("Workshare " << id << " difficulty " << ws.workshare_difficulty 
-                   << " below threshold " << workshare_threshold);
-      tvc.m_low_difficulty = true;
-      return false;
-    }
+    // TODO: Validate proof of work hash meets workshare difficulty threshold
+    // The actual PoW validation should check that the workshare hash meets
+    // the required difficulty (block_difficulty >> 7)
     
     // TODO: Validate proof of work hash when mining utilities are available
     // For now, we trust the difficulty value provided

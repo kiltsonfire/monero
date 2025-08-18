@@ -1340,8 +1340,7 @@ namespace cryptonote
     crypto::hash id;
     get_blob_hash(t_serializable_object_to_blob(ws), id);
     
-    MINFO("Workshare found: difficulty=" << ws.workshare_difficulty 
-          << " nonce=" << ws.nonce 
+    MINFO("Workshare found: nonce=" << ws.nonce 
           << " timestamp=" << ws.timestamp
           << " id=" << id);
     
@@ -1361,19 +1360,17 @@ namespace cryptonote
       cryptonote::blobdata workshare_blob;
       t_serializable_object_to_blob(ws, workshare_blob);
       
-      // Note: Direct P2P broadcast needs to be implemented properly
-      // For now, just log that we would broadcast
-      MINFO("Would broadcast workshare " << id << " to network");
+      // Broadcast workshare to all peers
+      NOTIFY_NEW_WORKSHARE::request req;
+      req.workshare_blob = workshare_blob;
+      req.workshare_id = id;
+      req.current_blockchain_height = get_current_blockchain_height();
+      
+      m_pprotocol->relay_workshare(req);
+      MINFO("Broadcasting workshare " << id << " to network");
     }
     
     return true;
-  }
-  //-----------------------------------------------------------------------------------------------
-  crypto::hash core::get_parent_block_hash()
-  {
-    // Return the hash of the current blockchain tip
-    // This is used for workshare anti-hoarding validation
-    return m_blockchain_storage.get_tail_id();
   }
   //-----------------------------------------------------------------------------------------------
   bool core::add_workshare(const workshare& ws, const crypto::hash& id, 

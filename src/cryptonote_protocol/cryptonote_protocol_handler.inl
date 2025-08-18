@@ -575,7 +575,7 @@ namespace cryptonote
   {
     // @TODO: Eventually drop support for this endpoint
 
-    MLOGIF_P2P_MESSAGE(crypto::hash hash; cryptonote::block b; bool ret = cryptonote::parse_and_validate_block_from_blob(arg.b.block, b, &hash);, ret, context << "Received NOTIFY_NEW_BLOCK " << hash << " (height " << arg.current_blockchain_height << ", " << arg.b.txs.size() << " txes)");
+    MLOGIF_P2P_MESSAGE(crypto::hash hash; cryptonote::block b; bool ret = cryptonote::parse_and_validate_block_from_blob(arg.b.block, b, &hash);, ret, context << "Received NOTIFY_NEW_BLOCK " << hash << " (height " << arg.current_blockchain_height << ", " << arg.b.txs.size() << " txes, " << b.workshare_count << " workshares)");
 
     // Redirect this request form to fluffy block handling
     NOTIFY_NEW_FLUFFY_BLOCK::request fluffy_arg;
@@ -621,7 +621,7 @@ namespace cryptonote
 
     // Log block info
     MLOG_P2P_MESSAGE(context << "Received NOTIFY_NEW_FLUFFY_BLOCK " << new_block_hash << " (height "
-      << arg.current_blockchain_height << ", " << arg.b.txs.size() << " txes)");
+      << arg.current_blockchain_height << ", " << arg.b.txs.size() << " txes, " << new_block.workshare_count << " workshares)");
 
     // Pause mining and resume after block verification to prevent wasted mining cycles while
     // validating the next block. Needs more research into if this is a DoS vector or not. Invalid
@@ -2676,6 +2676,13 @@ skip:
        DB twice on received transactions - it is difficult to workaround this
        due to the internal design. */
     return m_p2p->send_txs(std::move(arg.txs), zone, source, tx_relay) != epee::net_utils::zone::invalid;
+  }
+  //------------------------------------------------------------------------------------------------------------------------
+  template<class t_core>
+  bool t_cryptonote_protocol_handler<t_core>::relay_workshare(NOTIFY_NEW_WORKSHARE::request& arg)
+  {
+    // Relay workshare to all connected peers
+    return m_p2p->broadcast_workshare(arg.workshare_blob, arg.workshare_id, arg.current_blockchain_height);
   }
   //------------------------------------------------------------------------------------------------------------------------
   template<class t_core>

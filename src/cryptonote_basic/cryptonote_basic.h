@@ -489,6 +489,7 @@ namespace cryptonote
     uint64_t timestamp;
     crypto::hash  prev_id;
     uint32_t nonce;
+    uint32_t workshare_count;  // Number of workshares included in block body
 
     BEGIN_SERIALIZE()
       VARINT_FIELD(major_version)
@@ -496,6 +497,7 @@ namespace cryptonote
       VARINT_FIELD(timestamp)
       FIELD(prev_id)
       FIELD(nonce)
+      VARINT_FIELD(workshare_count)
     END_SERIALIZE()
   };
 
@@ -514,7 +516,6 @@ namespace cryptonote
       miner_tx(b.miner_tx),
       tx_hashes(b.tx_hashes),
       workshare_hashes(b.workshare_hashes),
-      workshare_merkle_root(b.workshare_merkle_root),
       hash(b.hash)
     {}
     block(block &&b):
@@ -523,7 +524,6 @@ namespace cryptonote
       miner_tx(std::move(b.miner_tx)),
       tx_hashes(std::move(b.tx_hashes)),
       workshare_hashes(std::move(b.workshare_hashes)),
-      workshare_merkle_root(std::move(b.workshare_merkle_root)),
       hash(std::move(b.hash))
     {
       b.miner_tx.set_null();
@@ -539,7 +539,6 @@ namespace cryptonote
         miner_tx = b.miner_tx;
         tx_hashes = b.tx_hashes;
         workshare_hashes = b.workshare_hashes;
-        workshare_merkle_root = b.workshare_merkle_root;
         hash = b.hash;
       }
       return *this;
@@ -553,7 +552,6 @@ namespace cryptonote
         miner_tx = std::move(b.miner_tx);
         tx_hashes = std::move(b.tx_hashes);
         workshare_hashes = std::move(b.workshare_hashes);
-        workshare_merkle_root = std::move(b.workshare_merkle_root);
         hash = std::move(b.hash);
         b.miner_tx.set_null();
         b.tx_hashes.clear();
@@ -569,9 +567,8 @@ namespace cryptonote
     transaction miner_tx;
     std::vector<crypto::hash> tx_hashes;
     
-    // Workshare commitment (added for workshare system)
-    std::vector<crypto::hash> workshare_hashes;  // Hashes of included workshares
-    crypto::hash workshare_merkle_root;          // Merkle root of workshares
+    // Workshare data in block body
+    std::vector<crypto::hash> workshare_hashes;  // Hashes of included workshares (body only)
 
     // hash cash
     mutable crypto::hash hash;
@@ -584,7 +581,6 @@ namespace cryptonote
       FIELD(miner_tx)
       FIELD(tx_hashes)
       FIELD(workshare_hashes)
-      FIELD(workshare_merkle_root)
       if (tx_hashes.size() > CRYPTONOTE_MAX_TX_PER_BLOCK)
         return false;
       if (workshare_hashes.size() > CRYPTONOTE_MAX_WORKSHARES_PER_BLOCK)

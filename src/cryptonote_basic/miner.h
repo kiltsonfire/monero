@@ -52,7 +52,6 @@ namespace cryptonote
     virtual bool handle_block_found(block& b, block_verification_context &bvc) = 0;
     virtual bool handle_workshare_found(const workshare& ws) = 0;
     virtual bool get_block_template(block& b, const account_public_address& adr, difficulty_type& diffic, uint64_t& height, uint64_t& expected_reward, uint64_t &cumulative_weight, const blobdata& ex_nonce, uint64_t &seed_height, crypto::hash &seed_hash) = 0;
-    virtual crypto::hash get_parent_block_hash() = 0;
   protected:
     ~i_miner_handler(){};
   };

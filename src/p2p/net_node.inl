@@ -2345,12 +2345,12 @@ namespace nodetool
     bool result = false;
     for (auto& zone : m_network_zones)
     {
-      epee::levin::message_writer msg;
-      epee::serialization::store_t_to_binary(request, msg.buffer);
-      
       for_each_connection([&](typename t_payload_net_handler::connection_context& context, peerid_type peer_id, uint32_t support_flags) -> bool {
         if (context.m_remote_address.get_zone() == zone.first)
         {
+          epee::levin::message_writer msg;
+          epee::serialization::store_t_to_binary(request, msg.buffer);
+          
           if (invoke_notify_to_peer(cryptonote::NOTIFY_NEW_WORKSHARE::ID, std::move(msg), context))
             result = true;
         }

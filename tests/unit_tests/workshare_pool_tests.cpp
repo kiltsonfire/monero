@@ -36,6 +36,7 @@
 #include "gtest/gtest.h"
 #include "cryptonote_basic/workshare.h"
 #include "cryptonote_basic/cryptonote_basic.h"
+#include "cryptonote_basic/cryptonote_format_utils.h"
 #include "cryptonote_config.h"
 #include "crypto/hash.h"
 #include "crypto/crypto.h"
@@ -70,11 +71,8 @@ protected:
         ws.major_version = 16;
         ws.minor_version = 16;
         ws.timestamp = (timestamp == 0) ? current_time : timestamp;
-        ws.parent_block_id = test_hash_1;
-        ws.referenced_block_id = test_hash_2;
+        ws.prev_id = test_hash_1;
         ws.nonce = nonce;
-        ws.miner_address_hash = test_miner_hash;
-        ws.workshare_difficulty = 1000;
         ws.set_hash(test_hash_3);
         return ws;
     }
@@ -102,7 +100,7 @@ TEST_F(WorksharePoolTest, BasicPoolEntryOperations)
     EXPECT_EQ(entry.ws.nonce, 12345);
     EXPECT_EQ(entry.id, entry_id);
     EXPECT_EQ(entry.receive_time, current_time);
-    EXPECT_EQ(entry.referenced_height, 100);
+    EXPECT_EQ(entry.block_height, 100);
     EXPECT_FALSE(entry.kept_by_block);
     
     // Test marking as kept by block
@@ -123,18 +121,18 @@ TEST_F(WorksharePoolTest, PoolEntrySerialization)
     
     // Serialize
     std::string blob;
-    ASSERT_TRUE(::serialization::dump_binary(entry1, blob));
+    blob = t_serializable_object_to_blob(entry1);
     EXPECT_GT(blob.size(), 0);
     
     // Deserialize
     workshare_pool_entry entry2;
-    ASSERT_TRUE(::serialization::parse_binary(blob, entry2));
+    ASSERT_TRUE(parse_and_validate_from_blob(blob, entry2));
     
     // Verify all fields
     EXPECT_EQ(entry2.ws.nonce, entry1.ws.nonce);
     EXPECT_EQ(entry2.id, entry1.id);
     EXPECT_EQ(entry2.receive_time, entry1.receive_time);
-    EXPECT_EQ(entry2.referenced_height, entry1.referenced_height);
+    EXPECT_EQ(entry2.block_height, entry1.block_height);
     EXPECT_EQ(entry2.kept_by_block, entry1.kept_by_block);
 }
 
@@ -210,7 +208,7 @@ TEST_F(WorksharePoolTest, PoolExpiryLogic)
     for (const auto& entry : pool_entries)
     {
         uint64_t age = current_time - entry.receive_time;
-        if (age <= expiry_time)
+        if (age < expiry_time)  // Strict less than for expiry
         {
             non_expired.push_back(entry);
         }
@@ -278,19 +276,19 @@ TEST_F(WorksharePoolTest, PoolOrdering)
     // Sort by height (descending), then by time (ascending)
     std::sort(pool_entries.begin(), pool_entries.end(), 
               [](const workshare_pool_entry& a, const workshare_pool_entry& b) {
-                  if (a.referenced_height != b.referenced_height)
-                      return a.referenced_height > b.referenced_height; // Higher height first
+                  if (a.block_height != b.block_height)
+                      return a.block_height > b.block_height; // Higher height first
                   return a.receive_time < b.receive_time; // Earlier time first
               });
     
     // Verify ordering
-    EXPECT_GE(pool_entries[0].referenced_height, pool_entries[1].referenced_height);
-    EXPECT_GE(pool_entries[1].referenced_height, pool_entries[2].referenced_height);
+    EXPECT_GE(pool_entries[0].block_height, pool_entries[1].block_height);
+    EXPECT_GE(pool_entries[1].block_height, pool_entries[2].block_height);
     
     // Within same height, earlier time should come first
     for (size_t i = 1; i < pool_entries.size(); ++i)
     {
-        if (pool_entries[i-1].referenced_height == pool_entries[i].referenced_height)
+        if (pool_entries[i-1].block_height == pool_entries[i].block_height)
         {
             EXPECT_LE(pool_entries[i-1].receive_time, pool_entries[i].receive_time);
         }
@@ -361,14 +359,15 @@ TEST_F(WorksharePoolTest, WeightCalculation)
         EXPECT_GE(workshare_weight, 0);
         
         // Weight should scale reasonably
-        if (count == 0)
+        if (count == 0) {
             EXPECT_EQ(workshare_weight, 0);
-        else if (count < weight_divisor)
+        } else if (count < weight_divisor) {
             EXPECT_EQ(workshare_weight, 0); // Rounds down
-        else if (count == weight_divisor)
+        } else if (count == weight_divisor) {
             EXPECT_EQ(workshare_weight, 1);
-        else if (count == weight_divisor * 2)
+        } else if (count == weight_divisor * 2) {
             EXPECT_EQ(workshare_weight, 2);
+        }
     }
     
     // Test at maximum workshares

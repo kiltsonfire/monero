@@ -240,13 +240,6 @@ namespace cryptonote
      virtual bool handle_workshare_found(const workshare& ws) override;
 
      /**
-      * @brief gets the parent block hash for workshare validation
-      *
-      * @return the hash of the current blockchain tip (parent for new blocks)
-      */
-     virtual crypto::hash get_parent_block_hash() override;
-
-     /**
       * @brief adds a workshare to the workshare pool
       *
       * @param ws the workshare to add

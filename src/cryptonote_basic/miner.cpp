@@ -592,7 +592,8 @@ namespace cryptonote
       {
         //we lucky!
         ++m_config.current_extra_message_index;
-        MGINFO_GREEN("Found block " << get_block_hash(b) << " at height " << height << " for difficulty: " << local_diff);
+        MGINFO_GREEN("Found block " << get_block_hash(b) << " at height " << height 
+                     << " for difficulty: " << local_diff << ", workshares included: " << b.workshare_count);
         cryptonote::block_verification_context bvc;
         if(!m_phandler->handle_block_found(b, bvc) || !bvc.m_added_to_main_chain)
         {
@@ -613,7 +614,8 @@ namespace cryptonote
           workshare ws;
           if(create_workshare_from_block(b, ws, h))
           {
-            MDEBUG("Found workshare for difficulty: " << ws.workshare_difficulty);
+            MGINFO("Found workshare at height " << height << " with difficulty: " << workshare_diff 
+                   << ", workshare_count in template: " << b.workshare_count);
             m_phandler->handle_workshare_found(ws);
           }
         }
@@ -1176,23 +1178,13 @@ namespace cryptonote
   {
     try
     {
+      // Workshare is identical to block header
       ws.major_version = bl.major_version;
       ws.minor_version = bl.minor_version;
       ws.timestamp = bl.timestamp;
-      
-      // Get parent block hash from handler (critical for anti-hoarding)
-      ws.parent_block_id = m_phandler->get_parent_block_hash();
-      
-      // The block this workshare was mining for
-      ws.referenced_block_id = bl.prev_id;
-      
+      ws.prev_id = bl.prev_id;
       ws.nonce = bl.nonce;
-      
-      // Hash of mining address for attribution
-      ws.miner_address_hash = crypto::cn_fast_hash(&m_mine_address, sizeof(m_mine_address));
-      
-      // Set the difficulty this workshare meets
-      ws.workshare_difficulty = get_workshare_difficulty(m_diffic);
+      ws.workshare_count = bl.workshare_count;
       
       // Set the computed hash
       ws.set_hash(hash);
