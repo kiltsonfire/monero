@@ -34,6 +34,7 @@ set(unit_tests_sources
   blockchain_db.cpp
   block_queue.cpp
   block_reward.cpp
+  block_workshare_tests.cpp
   bootstrap_node_selector.cpp
   bulletproofs.cpp
   bulletproofs_plus.cpp

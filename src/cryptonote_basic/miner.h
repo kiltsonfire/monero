@@ -83,6 +83,7 @@ namespace cryptonote
     static bool find_nonce_for_given_block(const get_block_hash_t &gbh, block& bl, const difficulty_type& diffic, uint64_t height, const crypto::hash *seed_hash = NULL);
     void pause();
     void resume();
+    void update_block_template_with_workshare(const workshare& ws, const crypto::hash& ws_id);
     void do_print_hashrate(bool do_hr);
     bool get_is_background_mining_enabled() const;
     bool get_ignore_battery() const;

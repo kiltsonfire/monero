@@ -523,6 +523,35 @@ namespace cryptonote
       MDEBUG("MINING RESUMED");
   }
   //-----------------------------------------------------------------------------------------------------
+  void miner::update_block_template_with_workshare(const workshare& ws, const crypto::hash& ws_id)
+  {
+    CRITICAL_REGION_LOCAL(m_template_lock);
+    
+    // Check if we're mining the same block this workshare is for
+    if (m_template.prev_id != ws.prev_id)
+    {
+      MDEBUG("Workshare is for different block, not updating template");
+      return;
+    }
+    
+    // Check if we haven't already reached max workshares
+    const size_t MAX_WORKSHARES_PER_BLOCK = 300;
+    if (m_template.workshare_hashes.size() >= MAX_WORKSHARES_PER_BLOCK)
+    {
+      MDEBUG("Block template already has maximum workshares");
+      return;
+    }
+    
+    // Add workshare to the template
+    m_template.workshare_hashes.push_back(ws_id);
+    m_template.workshare_count = m_template.workshare_hashes.size();
+    
+    // Increment template version to trigger miners to pick up new template
+    ++m_template_no;
+    
+    MINFO("Updated mining template with workshare " << ws_id << ", now have " << m_template.workshare_count << " workshares");
+  }
+  //-----------------------------------------------------------------------------------------------------
   bool miner::worker_thread()
   {
     const uint32_t th_local_index = m_thread_index++; // atomically increment, getting value before increment

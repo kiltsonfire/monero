@@ -1293,31 +1293,6 @@ namespace cryptonote
   bool core::handle_block_found(block& b, block_verification_context &bvc)
   {
     bvc = {};
-    
-    // Update block with workshares that were found while mining this block
-    // Get workshares that have the same prev_id as this block (workshares mined for this height)
-    const size_t MAX_WORKSHARES_PER_BLOCK = 300;
-    std::vector<workshare_pool_entry> workshares = m_workshare_pool.get_workshares_for_parent(
-      b.prev_id, MAX_WORKSHARES_PER_BLOCK);
-    
-    // Update the block with these workshares
-    b.workshare_hashes.clear();
-    b.workshare_hashes.reserve(workshares.size());
-    
-    for (const auto& entry : workshares)
-    {
-      b.workshare_hashes.push_back(entry.id);
-    }
-    
-    // Update workshare count in header
-    b.workshare_count = b.workshare_hashes.size();
-    
-    if (b.workshare_count > 0)
-    {
-      MINFO("Added " << b.workshare_count << " workshares to found block at height " << get_block_height(b));
-    }
-    
-    // Now pause the miner after we've computed the updated block template
     m_miner.pause();
     std::vector<block_complete_entry> blocks;
     try
@@ -1397,6 +1372,10 @@ namespace cryptonote
       MWARNING("Failed to add locally found workshare to pool");
       return false;
     }
+    
+    // Update miner template to include this workshare
+    // This allows workshares found while mining block N+1 to be included IN block N+1
+    m_miner.update_block_template_with_workshare(ws, id);
     
     // Broadcast to network
     if (m_pprotocol)
