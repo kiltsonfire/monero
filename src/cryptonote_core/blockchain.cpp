@@ -1646,6 +1646,33 @@ bool Blockchain::create_block_template(block& b, const crypto::hash *from_block,
     return false;
   }
   pool_cookie = m_tx_pool.cookie();
+  
+  // Add workshares to the block template
+  size_t workshares_weight = 0;
+  if (m_workshare_pool)
+  {
+    // Get workshares for the parent block (current top)
+    const size_t MAX_WORKSHARES_PER_BLOCK = 300; // Maximum workshares to include
+    std::vector<workshare_pool_entry> workshares = m_workshare_pool->get_workshares_for_parent(
+      b.prev_id, MAX_WORKSHARES_PER_BLOCK);
+    
+    // Add workshare hashes to the block
+    b.workshare_hashes.clear();
+    b.workshare_hashes.reserve(workshares.size());
+    
+    for (const auto& entry : workshares)
+    {
+      b.workshare_hashes.push_back(entry.id);
+      // Each workshare hash adds 32 bytes to the block weight
+      workshares_weight += sizeof(crypto::hash);
+    }
+    
+    // Update workshare count in header
+    b.workshare_count = b.workshare_hashes.size();
+    
+    MDEBUG("Added " << b.workshare_count << " workshares to block template, weight: " << workshares_weight);
+  }
+  
 #if defined(DEBUG_CREATE_BLOCK_TEMPLATE)
   size_t real_txs_weight = 0;
   uint64_t real_fee = 0;
@@ -1706,9 +1733,9 @@ bool Blockchain::create_block_template(block& b, const crypto::hash *from_block,
   //make blocks coin-base tx looks close to real coinbase tx to get truthful blob weight
   uint8_t hf_version = b.major_version;
   size_t max_outs = hf_version >= 4 ? 1 : 11;
-  bool r = construct_miner_tx(height, median_weight, already_generated_coins, txs_weight, fee, miner_address, b.miner_tx, ex_nonce, max_outs, hf_version);
+  bool r = construct_miner_tx(height, median_weight, already_generated_coins, txs_weight + workshares_weight, fee, miner_address, b.miner_tx, ex_nonce, max_outs, hf_version);
   CHECK_AND_ASSERT_MES(r, false, "Failed to construct miner tx, first chance");
-  cumulative_weight = txs_weight + get_transaction_weight(b.miner_tx);
+  cumulative_weight = txs_weight + workshares_weight + get_transaction_weight(b.miner_tx);
 #if defined(DEBUG_CREATE_BLOCK_TEMPLATE)
   MDEBUG("Creating block template: miner tx weight " << get_transaction_weight(b.miner_tx) <<
       ", cumulative weight " << cumulative_weight);
@@ -1719,9 +1746,9 @@ bool Blockchain::create_block_template(block& b, const crypto::hash *from_block,
 
     CHECK_AND_ASSERT_MES(r, false, "Failed to construct miner tx, second chance");
     size_t coinbase_weight = get_transaction_weight(b.miner_tx);
-    if (coinbase_weight > cumulative_weight - txs_weight)
+    if (coinbase_weight > cumulative_weight - txs_weight - workshares_weight)
     {
-      cumulative_weight = txs_weight + coinbase_weight;
+      cumulative_weight = txs_weight + workshares_weight + coinbase_weight;
 #if defined(DEBUG_CREATE_BLOCK_TEMPLATE)
       MDEBUG("Creating block template: miner tx weight " << coinbase_weight <<
           ", cumulative weight " << cumulative_weight << " is greater than before");
@@ -1729,9 +1756,9 @@ bool Blockchain::create_block_template(block& b, const crypto::hash *from_block,
       continue;
     }
 
-    if (coinbase_weight < cumulative_weight - txs_weight)
+    if (coinbase_weight < cumulative_weight - txs_weight - workshares_weight)
     {
-      size_t delta = cumulative_weight - txs_weight - coinbase_weight;
+      size_t delta = cumulative_weight - txs_weight - workshares_weight - coinbase_weight;
 #if defined(DEBUG_CREATE_BLOCK_TEMPLATE)
       MDEBUG("Creating block template: miner tx weight " << coinbase_weight <<
           ", cumulative weight " << txs_weight + coinbase_weight <<
@@ -1739,11 +1766,11 @@ bool Blockchain::create_block_template(block& b, const crypto::hash *from_block,
 #endif
       b.miner_tx.extra.insert(b.miner_tx.extra.end(), delta, 0);
       //here  could be 1 byte difference, because of extra field counter is varint, and it can become from 1-byte len to 2-bytes len.
-      if (cumulative_weight != txs_weight + get_transaction_weight(b.miner_tx))
+      if (cumulative_weight != txs_weight + workshares_weight + get_transaction_weight(b.miner_tx))
       {
-        CHECK_AND_ASSERT_MES(cumulative_weight + 1 == txs_weight + get_transaction_weight(b.miner_tx), false, "unexpected case: cumulative_weight=" << cumulative_weight << " + 1 is not equal txs_cumulative_weight=" << txs_weight << " + get_transaction_weight(b.miner_tx)=" << get_transaction_weight(b.miner_tx));
+        CHECK_AND_ASSERT_MES(cumulative_weight + 1 == txs_weight + workshares_weight + get_transaction_weight(b.miner_tx), false, "unexpected case: cumulative_weight=" << cumulative_weight << " + 1 is not equal txs_cumulative_weight=" << txs_weight << " + workshares_weight=" << workshares_weight << " + get_transaction_weight(b.miner_tx)=" << get_transaction_weight(b.miner_tx));
         b.miner_tx.extra.resize(b.miner_tx.extra.size() - 1);
-        if (cumulative_weight != txs_weight + get_transaction_weight(b.miner_tx))
+        if (cumulative_weight != txs_weight + workshares_weight + get_transaction_weight(b.miner_tx))
         {
           //fuck, not lucky, -1 makes varint-counter size smaller, in that case we continue to grow with cumulative_weight
           MDEBUG("Miner tx creation has no luck with delta_extra size = " << delta << " and " << delta - 1);
@@ -1753,16 +1780,13 @@ bool Blockchain::create_block_template(block& b, const crypto::hash *from_block,
         MDEBUG("Setting extra for block: " << b.miner_tx.extra.size() << ", try_count=" << try_count);
       }
     }
-    CHECK_AND_ASSERT_MES(cumulative_weight == txs_weight + get_transaction_weight(b.miner_tx), false, "unexpected case: cumulative_weight=" << cumulative_weight << " is not equal txs_cumulative_weight=" << txs_weight << " + get_transaction_weight(b.miner_tx)=" << get_transaction_weight(b.miner_tx));
+    CHECK_AND_ASSERT_MES(cumulative_weight == txs_weight + workshares_weight + get_transaction_weight(b.miner_tx), false, "unexpected case: cumulative_weight=" << cumulative_weight << " is not equal txs_cumulative_weight=" << txs_weight << " + workshares_weight=" << workshares_weight << " + get_transaction_weight(b.miner_tx)=" << get_transaction_weight(b.miner_tx));
 #if defined(DEBUG_CREATE_BLOCK_TEMPLATE)
     MDEBUG("Creating block template: miner tx weight " << coinbase_weight <<
         ", cumulative weight " << cumulative_weight << " is now good");
 #endif
 
-    // Set workshare_count to match the number of workshare hashes
-    // For now, we're not including any workshares in the block template
-    // This will be populated when miners submit blocks with workshares
-    b.workshare_count = b.workshare_hashes.size();
+    // workshare_count is already set when workshares are added above
     
     if (!from_block)
       cache_block_template(b, miner_address, ex_nonce, diffic, height, expected_reward, cumulative_weight, seed_height, seed_hash, pool_cookie);
@@ -4178,6 +4202,10 @@ leave:
 
   size_t coinbase_weight = get_transaction_weight(bl.miner_tx);
   size_t cumulative_block_weight = coinbase_weight;
+  
+  // Add weight for workshares (each hash is 32 bytes)
+  size_t workshares_weight = bl.workshare_hashes.size() * sizeof(crypto::hash);
+  cumulative_block_weight += workshares_weight;
 
   std::vector<std::pair<transaction, blobdata>> txs;
   //                          txid     weight mempool?

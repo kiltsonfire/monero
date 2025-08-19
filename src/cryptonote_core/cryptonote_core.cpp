@@ -1264,7 +1264,7 @@ namespace cryptonote
     m_miner.resume();
   }
   //-----------------------------------------------------------------------------------------------
-  block_complete_entry get_block_complete_entry(block& b, tx_memory_pool &pool)
+  block_complete_entry get_block_complete_entry(block& b, tx_memory_pool &pool, workshare_memory_pool *ws_pool = nullptr)
   {
     block_complete_entry bce;
     bce.block = cryptonote::block_to_blob(b);
@@ -1275,17 +1275,54 @@ namespace cryptonote
       CHECK_AND_ASSERT_THROW_MES(pool.get_transaction(tx_hash, txblob, relay_category::all), "Transaction not found in pool");
       bce.txs.push_back({txblob, crypto::null_hash});
     }
+    // Include serialized workshares as blobdata
+    if (ws_pool)
+    {
+      for (const auto &ws_hash: b.workshare_hashes)
+      {
+        workshare_pool_entry entry;
+        if (ws_pool->get_workshare(ws_hash, entry))
+        {
+          bce.workshares.push_back(t_serializable_object_to_blob(entry.ws));
+        }
+      }
+    }
     return bce;
   }
   //-----------------------------------------------------------------------------------------------
   bool core::handle_block_found(block& b, block_verification_context &bvc)
   {
     bvc = {};
+    
+    // Update block with workshares that were found while mining this block
+    // Get workshares that have the same prev_id as this block (workshares mined for this height)
+    const size_t MAX_WORKSHARES_PER_BLOCK = 300;
+    std::vector<workshare_pool_entry> workshares = m_workshare_pool.get_workshares_for_parent(
+      b.prev_id, MAX_WORKSHARES_PER_BLOCK);
+    
+    // Update the block with these workshares
+    b.workshare_hashes.clear();
+    b.workshare_hashes.reserve(workshares.size());
+    
+    for (const auto& entry : workshares)
+    {
+      b.workshare_hashes.push_back(entry.id);
+    }
+    
+    // Update workshare count in header
+    b.workshare_count = b.workshare_hashes.size();
+    
+    if (b.workshare_count > 0)
+    {
+      MINFO("Added " << b.workshare_count << " workshares to found block at height " << get_block_height(b));
+    }
+    
+    // Now pause the miner after we've computed the updated block template
     m_miner.pause();
     std::vector<block_complete_entry> blocks;
     try
     {
-      blocks.push_back(get_block_complete_entry(b, m_mempool));
+      blocks.push_back(get_block_complete_entry(b, m_mempool, &m_workshare_pool));
     }
     catch (const std::exception &e)
     {
@@ -1310,6 +1347,13 @@ namespace cryptonote
     CHECK_AND_ASSERT_MES(!bvc.m_verifivation_failed, false, "mined block failed verification");
     if(bvc.m_added_to_main_chain)
     {
+      // Remove workshares that were included in this block from the pool
+      if (!b.workshare_hashes.empty())
+      {
+        m_workshare_pool.remove_workshares(b.workshare_hashes);
+        MDEBUG("Removed " << b.workshare_hashes.size() << " workshares from pool after block added");
+      }
+      
       cryptonote_connection_context exclude_context = {};
       NOTIFY_NEW_FLUFFY_BLOCK::request arg{};
       arg.current_blockchain_height = m_blockchain_storage.get_current_blockchain_height();
