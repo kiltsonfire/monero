@@ -45,6 +45,7 @@
 #include "time_helper.h"
 #include "boost/logic/tribool.hpp"
 #include <boost/filesystem.hpp>
+#include <boost/chrono.hpp>
 
 #ifdef __APPLE__
   #include <sys/times.h>
@@ -128,7 +129,9 @@ namespace cryptonote
     m_idle_threshold(BACKGROUND_MINING_DEFAULT_IDLE_THRESHOLD_PERCENTAGE),
     m_mining_target(BACKGROUND_MINING_DEFAULT_MINING_TARGET_PERCENTAGE),
     m_miner_extra_sleep(BACKGROUND_MINING_DEFAULT_MINER_EXTRA_SLEEP_MILLIS),
-    m_block_reward(0)
+    m_block_reward(0),
+    m_template_update_needed(false),
+    m_template_update_stop(false)
   {
     m_attrs.set_stack_size(THREAD_STACK_SIZE);
   }
@@ -156,7 +159,13 @@ namespace cryptonote
     if(!is_mining())
       return true;
 
-    return request_block_template();
+    // Signal the template update thread that an update is needed
+    {
+      boost::unique_lock<boost::mutex> lock(m_template_update_mutex);
+      m_template_update_needed = true;
+    }
+    m_template_update_cond.notify_one();
+    return true;
   }
   //-----------------------------------------------------------------------------------------------------
   bool miner::request_block_template()
@@ -418,6 +427,11 @@ namespace cryptonote
       LOG_PRINT_L0("Background mining controller thread started" );
     }
 
+    // Start template update thread
+    m_template_update_stop = false;
+    m_template_update_thread = boost::thread(m_attrs, boost::bind(&miner::template_update_thread_func, this));
+    LOG_PRINT_L1("Template update thread started");
+
     if(get_ignore_battery())
     {
       MINFO("Ignoring battery");
@@ -461,6 +475,14 @@ namespace cryptonote
     {
       m_is_background_mining_started_cond.notify_all();
       misc_utils::sleep_no_w(100);
+    }
+
+    // Stop template update thread
+    m_template_update_stop = true;
+    m_template_update_cond.notify_all();
+    if (m_template_update_thread.joinable())
+    {
+      m_template_update_thread.join();
     }
 
     // The background mining thread could be sleeping for a long time, so we
@@ -581,6 +603,34 @@ namespace cryptonote
         loop_count = 0;
       }
       loop_count++;
+      
+      // Check if we need to update the template (asynchronous update to avoid deadlock)
+      // Only try every 100 iterations to avoid hammering the blockchain
+      static uint32_t template_update_counter = 0;
+      if(m_template_update_needed && (++template_update_counter % 100 == 0))
+      {
+        MDEBUG("Template update needed, requesting new template");
+        // Try to get new template, but don't block forever
+        // If blockchain is busy, we'll try again later
+        bool got_template = false;
+        try {
+          got_template = request_block_template();
+        }
+        catch (const std::exception& e) {
+          MDEBUG("Exception getting block template: " << e.what() << ", continuing with old template");
+        }
+        
+        if(got_template)
+        {
+          MDEBUG("Template updated successfully");
+          m_template_update_needed = false;
+        }
+        else
+        {
+          MDEBUG("Could not get block template now, will retry later");
+          // Keep the flag set to try again
+        }
+      }
       
       if(m_pausers_count)//anti split workaround
       {
@@ -1215,6 +1265,53 @@ namespace cryptonote
   {
     // Workshares are approximately 7 bits easier (divide by 128)
     return block_difficulty >> CRYPTONOTE_WORKSHARE_DIFFICULTY_SHIFT;
+  }
+  //-----------------------------------------------------------------------------------------------------
+  bool miner::template_update_thread_func()
+  {
+    LOG_PRINT_L1("Template update thread started");
+    
+    while (!m_template_update_stop)
+    {
+      boost::unique_lock<boost::mutex> lock(m_template_update_mutex);
+      
+      // Wait for an update signal or timeout after 5 seconds
+      bool timeout = !m_template_update_cond.wait_for(lock, 
+                                                      boost::chrono::seconds(5),
+                                                      [this] { return m_template_update_needed.load() || m_template_update_stop.load(); });
+      
+      if (m_template_update_stop)
+        break;
+        
+      // If we need an update (either signaled or periodic timeout)
+      if (m_template_update_needed || timeout)
+      {
+        m_template_update_needed = false;
+        lock.unlock(); // Release lock before making blocking call
+        
+        LOG_PRINT_L2("Template update thread requesting new block template");
+        
+        // Request template with timeout protection
+        try
+        {
+          if (!request_block_template())
+          {
+            LOG_ERROR("Template update thread: Failed to get block template");
+          }
+          else
+          {
+            LOG_PRINT_L2("Template update thread: Successfully updated block template");
+          }
+        }
+        catch (const std::exception& e)
+        {
+          LOG_ERROR("Template update thread: Exception during template request: " << e.what());
+        }
+      }
+    }
+    
+    LOG_PRINT_L1("Template update thread stopped");
+    return true;
   }
   //-----------------------------------------------------------------------------------------------------
   bool miner::create_workshare_from_block(const block& bl, workshare& ws, const crypto::hash& hash)

@@ -299,7 +299,6 @@ TEST_F(WorkshareTest, PoolEntry)
     workshare_pool_entry entry1;
     EXPECT_EQ(entry1.id, crypto::null_hash);
     EXPECT_EQ(entry1.receive_time, 0);
-    EXPECT_EQ(entry1.block_height, 0);
     EXPECT_FALSE(entry1.kept_by_block);
     
     // Test parameterized constructor
@@ -308,15 +307,13 @@ TEST_F(WorkshareTest, PoolEntry)
     ws.nonce = 12345;
     
     uint64_t receive_time = 1640995200;
-    uint64_t height = 12345;
     
-    workshare_pool_entry entry2(ws, test_hash_1, receive_time, height);
+    workshare_pool_entry entry2(ws, test_hash_1, receive_time);
     
     EXPECT_EQ(entry2.ws.major_version, 16);
     EXPECT_EQ(entry2.ws.nonce, 12345);
     EXPECT_EQ(entry2.id, test_hash_1);
     EXPECT_EQ(entry2.receive_time, receive_time);
-    EXPECT_EQ(entry2.block_height, height);
     EXPECT_FALSE(entry2.kept_by_block);
     
     // Test serialization
@@ -331,7 +328,6 @@ TEST_F(WorkshareTest, PoolEntry)
     EXPECT_EQ(entry3.ws.nonce, entry2.ws.nonce);
     EXPECT_EQ(entry3.id, entry2.id);
     EXPECT_EQ(entry3.receive_time, entry2.receive_time);
-    EXPECT_EQ(entry3.block_height, entry2.block_height);
     EXPECT_EQ(entry3.kept_by_block, entry2.kept_by_block);
 }
 

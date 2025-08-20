@@ -28,12 +28,9 @@
 
 #pragma once
 
+#include <array>
 #include <atomic>
-#include <map>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
-#include <mutex>
 #include <chrono>
 
 #include "crypto/hash.h"
@@ -41,28 +38,31 @@
 #include "cryptonote_basic/verification_context.h"
 #include "include_base_utils.h"
 #include "string_tools.h"
-#include "syncobj.h"
 
 namespace cryptonote
 {
   class Blockchain;
 
   /**
-   * @brief Memory pool for workshares with rate limiting and expiry
+   * @brief Lock-free memory pool for workshares using a ring buffer
    * 
-   * Manages workshares received from the network before they are included in blocks.
-   * Provides rate limiting per peer, automatic expiry, and efficient lookup.
+   * Manages workshares using a fixed-size ring buffer with lock-free operations.
+   * Old entries are automatically overwritten when the buffer fills up.
    * 
    * Key features:
-   * - Maximum 300 workshares per parent block
-   * - 1 hour expiry time for unused workshares
-   * - Rate limiting: 10 workshares/second per peer
-   * - Thread-safe operations
-   * - Efficient parent block indexing
+   * - Lock-free ring buffer implementation (10,000 entries)
+   * - No explicit expiry - old entries naturally get overwritten
+   * - Wait-free reads
+   * - Maximum 300 workshares per parent block for inclusion
+   * - No memory allocation after initialization
    */
   class workshare_memory_pool: boost::noncopyable
   {
   public:
+    // Fixed size of the ring buffer
+    static constexpr size_t POOL_SIZE = 10000;
+    static constexpr size_t MAX_WORKSHARES_PER_PARENT = 300;
+
     /**
      * @brief Constructor
      * @param blockchain Reference to the blockchain for validation
@@ -70,10 +70,10 @@ namespace cryptonote
     workshare_memory_pool(Blockchain& blockchain);
 
     /**
-     * @brief Add a workshare to the memory pool
+     * @brief Add a workshare to the ring buffer (lock-free)
      * @param ws The workshare to add
      * @param id Pre-computed hash of the workshare
-     * @param peer_id ID of the peer that sent this workshare
+     * @param peer_id ID of the peer that sent this workshare (unused in lock-free design)
      * @param tvc Verification context for validation results
      * @return true if successfully added, false otherwise
      */
@@ -81,22 +81,22 @@ namespace cryptonote
                       const boost::uuids::uuid& peer_id, workshare_verification_context& tvc);
 
     /**
-     * @brief Get workshares for a specific parent block
+     * @brief Get workshares for a specific parent block (lock-free read)
      * @param parent_block_id The parent block hash
      * @param max_count Maximum number of workshares to return
      * @return Vector of workshare pool entries
      */
     std::vector<workshare_pool_entry> get_workshares_for_parent(
-        const crypto::hash& parent_block_id, size_t max_count = 300);
+        const crypto::hash& parent_block_id, size_t max_count = MAX_WORKSHARES_PER_PARENT);
 
     /**
-     * @brief Get all workshares in the pool
+     * @brief Get all valid workshares in the pool (lock-free read)
      * @return Vector of all workshare pool entries
      */
     std::vector<workshare_pool_entry> get_all_workshares();
 
     /**
-     * @brief Get workshare by ID
+     * @brief Get workshare by ID (lock-free read)
      * @param id The workshare hash
      * @param entry Output parameter for the workshare entry
      * @return true if found, false otherwise
@@ -104,46 +104,42 @@ namespace cryptonote
     bool get_workshare(const crypto::hash& id, workshare_pool_entry& entry);
 
     /**
-     * @brief Remove workshares that have been included in a block
-     * @param workshare_ids Vector of workshare IDs to remove
+     * @brief No-op in ring buffer design (old entries get overwritten)
      */
-    void remove_workshares(const std::vector<crypto::hash>& workshare_ids);
+    void remove_workshares(const std::vector<crypto::hash>& workshare_ids) {}
 
     /**
-     * @brief Mark workshares as kept by block (for reorganizations)
-     * @param workshare_ids Vector of workshare IDs to mark
-     * @param kept True to mark as kept, false to unmark
+     * @brief No-op in ring buffer design
      */
-    void mark_workshares_kept_by_block(const std::vector<crypto::hash>& workshare_ids, bool kept);
+    void mark_workshares_kept_by_block(const std::vector<crypto::hash>& workshare_ids, bool kept) {}
 
     /**
-     * @brief Clean up expired workshares and reset rate limits
-     * Called periodically by the daemon
+     * @brief No-op in ring buffer design (automatic via overwriting)
      */
-    void cleanup_expired();
+    void cleanup_expired() {}
 
     /**
      * @brief Get current pool statistics
-     * @param total_workshares Output for total workshare count
+     * @param total_workshares Output for total valid workshare count
      * @param active_parents Output for number of parent blocks with workshares
      */
     void get_pool_stats(size_t& total_workshares, size_t& active_parents);
 
     /**
-     * @brief Check if workshare already exists in pool
+     * @brief Check if workshare exists in pool (lock-free read)
      * @param id The workshare hash
      * @return true if exists, false otherwise
      */
     bool has_workshare(const crypto::hash& id);
 
     /**
-     * @brief Get workshare IDs for inventory requests
+     * @brief Get workshare IDs for inventory requests (lock-free read)
      * @param parent_block_id The parent block to query
      * @param max_count Maximum number of IDs to return
      * @return Vector of workshare IDs
      */
     std::vector<crypto::hash> get_workshare_inventory(
-        const crypto::hash& parent_block_id, size_t max_count = 300);
+        const crypto::hash& parent_block_id, size_t max_count = MAX_WORKSHARES_PER_PARENT);
 
   private:
     /**
@@ -156,74 +152,20 @@ namespace cryptonote
     bool validate_workshare(const workshare& ws, const crypto::hash& id, 
                            workshare_verification_context& tvc);
 
-    /**
-     * @brief Check rate limiting for a peer
-     * @param peer_id The peer ID
-     * @return true if rate limited, false if allowed
-     */
-    bool is_rate_limited(const boost::uuids::uuid& peer_id);
+    // Reference to blockchain for validation
+    Blockchain& m_blockchain;
 
-    /**
-     * @brief Record a workshare reception for rate limiting
-     * @param peer_id The peer ID
-     */
-    void record_peer_workshare(const boost::uuids::uuid& peer_id);
-
-    /**
-     * @brief Clean up rate limiting data for inactive peers
-     */
-    void cleanup_rate_limits();
-
-  private:
-    // Core pool data
-    std::unordered_map<crypto::hash, workshare_pool_entry> m_workshares; // hash -> entry
-    std::unordered_map<crypto::hash, std::unordered_set<crypto::hash>> m_workshares_by_parent; // parent -> set of worksheet hashes
-    
-    // Rate limiting per peer
-    struct peer_rate_context
-    {
-      uint64_t last_reset_time;
-      uint32_t workshares_received;
-      static constexpr uint32_t MAX_WORKSHARES_PER_SECOND = 10;
-      static constexpr uint32_t RATE_WINDOW_SECONDS = 1;
-      
-      peer_rate_context() : last_reset_time(0), workshares_received(0) {}
-      
-      bool is_rate_limited(uint64_t current_time)
-      {
-        if (current_time >= last_reset_time + RATE_WINDOW_SECONDS)
-        {
-          last_reset_time = current_time;
-          workshares_received = 0;
-        }
-        return workshares_received >= MAX_WORKSHARES_PER_SECOND;
-      }
-      
-      void record_workshare(uint64_t current_time)
-      {
-        if (current_time >= last_reset_time + RATE_WINDOW_SECONDS)
-        {
-          last_reset_time = current_time;
-          workshares_received = 0;
-        }
-        workshares_received++;
-      }
+    // Lock-free ring buffer storage
+    // Each entry has an atomic valid flag to handle concurrent reads during writes
+    struct ring_entry {
+      std::atomic<bool> valid{false};
+      workshare_pool_entry entry;
     };
     
-    std::map<boost::uuids::uuid, peer_rate_context> m_peer_rate_limits;
-    
-    // Thread synchronization
-    mutable epee::critical_section m_pool_lock;
-    
-    // Pool configuration
-    static constexpr size_t MAX_WORKSHARES_PER_PARENT = 300;
-    static constexpr uint64_t WORKSHARE_EXPIRY_TIME = 1200; // 20 minutes in seconds
-    
-    // References
-    Blockchain& m_blockchain;
+    std::array<ring_entry, POOL_SIZE> m_ring_buffer;
+    std::atomic<uint64_t> m_write_pos{0};
     
     // Statistics
-    std::atomic<size_t> m_total_workshares;
-    uint64_t m_last_cleanup_time;
+    std::atomic<uint64_t> m_total_workshares{0};
   };
 }

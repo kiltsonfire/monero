@@ -113,6 +113,7 @@ namespace cryptonote
     difficulty_type get_workshare_difficulty(difficulty_type block_difficulty) const;
     bool worker_thread();
     bool request_block_template();
+    bool template_update_thread_func();
     void  merge_hr();
     void  update_autodetection();
     
@@ -178,6 +179,13 @@ namespace cryptonote
     uint8_t m_idle_threshold;
     uint8_t m_mining_target;
     std::atomic<uint64_t> m_miner_extra_sleep;
+    std::atomic<bool> m_template_update_needed;
+    
+    // Template update thread
+    boost::thread m_template_update_thread;
+    std::atomic<bool> m_template_update_stop;
+    boost::condition_variable m_template_update_cond;
+    boost::mutex m_template_update_mutex;
     static bool get_system_times(uint64_t& total_time, uint64_t& idle_time);
     static bool get_process_time(uint64_t& total_time);
     static uint8_t get_percent_of_total(uint64_t some_time, uint64_t total_time);

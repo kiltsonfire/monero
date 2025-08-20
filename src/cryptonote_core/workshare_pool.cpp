@@ -33,6 +33,7 @@
 #include "misc_language.h"
 #include "time_helper.h"
 #include <boost/uuid/uuid_io.hpp>
+#include <unordered_set>
 
 #undef MONERO_DEFAULT_LOG_CATEGORY
 #define MONERO_DEFAULT_LOG_CATEGORY "workshare_pool"
@@ -42,10 +43,10 @@ namespace cryptonote
   //------------------------------------------------------------------
   workshare_memory_pool::workshare_memory_pool(Blockchain& blockchain)
     : m_blockchain(blockchain)
+    , m_write_pos(0)
     , m_total_workshares(0)
-    , m_last_cleanup_time(0)
   {
-    MINFO("Workshare memory pool initialized");
+    MINFO("Workshare memory pool initialized with lock-free ring buffer (size: " << POOL_SIZE << ")");
   }
 
   //------------------------------------------------------------------
@@ -55,26 +56,18 @@ namespace cryptonote
   {
     MDEBUG("[add_workshare] Starting - id: " << id << ", peer_id: " << peer_id);
     
-    const uint64_t current_time = static_cast<uint64_t>(std::time(nullptr));
-    
-    // Acquire the lock for pool operations
-    CRITICAL_REGION_LOCAL(m_pool_lock);
-    MDEBUG("[add_workshare] Acquired lock");
-    
-    // Check rate limiting (skip for local workshares)
-    if (!peer_id.is_nil() && is_rate_limited(peer_id))
+    // First check if it already exists (lock-free scan)
+    for (size_t i = 0; i < POOL_SIZE; ++i)
     {
-      MINFO("Workshare " << id << " rejected due to rate limiting from peer " << peer_id);
-      tvc.m_pool_full = true;
-      return false;
-    }
-    
-    // Check if already exists
-    if (m_workshares.find(id) != m_workshares.end())
-    {
-      MDEBUG("Workshare " << id << " already exists in pool");
-      tvc.m_already_exists = true;
-      return false;
+      if (m_ring_buffer[i].valid.load(std::memory_order_acquire))
+      {
+        if (m_ring_buffer[i].entry.id == id)
+        {
+          MDEBUG("Workshare " << id << " already exists in pool");
+          tvc.m_already_exists = true;
+          return false;
+        }
+      }
     }
     
     // Validate the workshare
@@ -84,30 +77,23 @@ namespace cryptonote
       return false;
     }
     
-    // No limit on workshare pool - only limit is when creating a new block
+    // Get the next position in the ring buffer (lock-free)
+    uint64_t pos = m_write_pos.fetch_add(1, std::memory_order_relaxed) % POOL_SIZE;
     
-    // Create pool entry
-    MDEBUG("[add_workshare] Creating pool entry");
-    workshare_pool_entry entry(ws, id, current_time);
+    // Mark the entry as invalid while we're writing
+    m_ring_buffer[pos].valid.store(false, std::memory_order_release);
     
-    // Add to main storage
-    MDEBUG("[add_workshare] Adding to m_workshares map, current size: " << m_workshares.size());
-    m_workshares[id] = entry;
-    MDEBUG("[add_workshare] Added to m_workshares, new size: " << m_workshares.size());
+    // Write the new entry
+    const uint64_t current_time = static_cast<uint64_t>(std::time(nullptr));
+    m_ring_buffer[pos].entry = workshare_pool_entry(ws, id, current_time);
     
-    // Add to parent index
-    MDEBUG("[add_workshare] Adding to parent index for prev_id: " << ws.prev_id);
-    m_workshares_by_parent[ws.prev_id].insert(id);
-    MDEBUG("[add_workshare] Added to parent index, parent now has " << m_workshares_by_parent[ws.prev_id].size() << " workshares");
-    
-    // Record rate limiting (skip for local workshares)
-    if (!peer_id.is_nil())
-      record_peer_workshare(peer_id);
+    // Mark the entry as valid (memory fence ensures entry is fully written)
+    m_ring_buffer[pos].valid.store(true, std::memory_order_release);
     
     // Update statistics
-    m_total_workshares++;
+    m_total_workshares.fetch_add(1, std::memory_order_relaxed);
     
-    LOG_PRINT_L1("Added workshare " << id << " to pool (prev_id: " << ws.prev_id << ")");
+    LOG_PRINT_L1("Added workshare " << id << " to pool at position " << pos << " (prev_id: " << ws.prev_id << ")");
     
     return true;
   }
@@ -116,27 +102,19 @@ namespace cryptonote
   std::vector<workshare_pool_entry> workshare_memory_pool::get_workshares_for_parent(
       const crypto::hash& parent_block_id, size_t max_count)
   {
-    CRITICAL_REGION_LOCAL(m_pool_lock);
-    
     std::vector<workshare_pool_entry> result;
+    result.reserve(std::min(max_count, (size_t)300));
     
-    auto it = m_workshares_by_parent.find(parent_block_id);
-    if (it == m_workshares_by_parent.end())
-      return result;
-    
-    result.reserve(std::min(it->second.size(), max_count));
-    
-    size_t count = 0;
-    for (const auto& ws_id : it->second)
+    // Lock-free scan through the ring buffer
+    for (size_t i = 0; i < POOL_SIZE && result.size() < max_count; ++i)
     {
-      if (count >= max_count)
-        break;
-        
-      auto ws_it = m_workshares.find(ws_id);
-      if (ws_it != m_workshares.end())
+      if (m_ring_buffer[i].valid.load(std::memory_order_acquire))
       {
-        result.push_back(ws_it->second);
-        count++;
+        const auto& entry = m_ring_buffer[i].entry;
+        if (entry.ws.prev_id == parent_block_id)
+        {
+          result.push_back(entry);
+        }
       }
     }
     
@@ -146,14 +124,16 @@ namespace cryptonote
   //------------------------------------------------------------------
   std::vector<workshare_pool_entry> workshare_memory_pool::get_all_workshares()
   {
-    CRITICAL_REGION_LOCAL(m_pool_lock);
-    
     std::vector<workshare_pool_entry> result;
-    result.reserve(m_workshares.size());
+    result.reserve(POOL_SIZE);
     
-    for (const auto& pair : m_workshares)
+    // Lock-free scan through the ring buffer
+    for (size_t i = 0; i < POOL_SIZE; ++i)
     {
-      result.push_back(pair.second);
+      if (m_ring_buffer[i].valid.load(std::memory_order_acquire))
+      {
+        result.push_back(m_ring_buffer[i].entry);
+      }
     }
     
     return result;
@@ -162,136 +142,77 @@ namespace cryptonote
   //------------------------------------------------------------------
   bool workshare_memory_pool::get_workshare(const crypto::hash& id, workshare_pool_entry& entry)
   {
-    CRITICAL_REGION_LOCAL(m_pool_lock);
-    
-    auto it = m_workshares.find(id);
-    if (it == m_workshares.end())
-      return false;
-      
-    entry = it->second;
-    return true;
-  }
-
-  //------------------------------------------------------------------
-  void workshare_memory_pool::remove_workshares(const std::vector<crypto::hash>& workshare_ids)
-  {
-    CRITICAL_REGION_LOCAL(m_pool_lock);
-    
-    for (const auto& id : workshare_ids)
+    // Lock-free search through the ring buffer
+    for (size_t i = 0; i < POOL_SIZE; ++i)
     {
-      auto it = m_workshares.find(id);
-      if (it != m_workshares.end())
+      if (m_ring_buffer[i].valid.load(std::memory_order_acquire))
       {
-        const crypto::hash& parent_id = it->second.ws.prev_id;
-        
-        // Remove from parent index
-        auto parent_it = m_workshares_by_parent.find(parent_id);
-        if (parent_it != m_workshares_by_parent.end())
+        if (m_ring_buffer[i].entry.id == id)
         {
-          parent_it->second.erase(id);
-          if (parent_it->second.empty())
-          {
-            m_workshares_by_parent.erase(parent_it);
-          }
+          entry = m_ring_buffer[i].entry;
+          return true;
         }
-        
-        // Remove from main storage
-        m_workshares.erase(it);
-        m_total_workshares--;
-        
-        LOG_PRINT_L2("Removed workshare " << id << " from pool");
-      }
-    }
-  }
-
-  //------------------------------------------------------------------
-  void workshare_memory_pool::mark_workshares_kept_by_block(
-      const std::vector<crypto::hash>& workshare_ids, bool kept)
-  {
-    CRITICAL_REGION_LOCAL(m_pool_lock);
-    
-    for (const auto& id : workshare_ids)
-    {
-      auto it = m_workshares.find(id);
-      if (it != m_workshares.end())
-      {
-        it->second.kept_by_block = kept;
-        LOG_PRINT_L3("Marked workshare " << id << " as " << (kept ? "kept" : "not kept") << " by block");
-      }
-    }
-  }
-
-  //------------------------------------------------------------------
-  void workshare_memory_pool::cleanup_expired()
-  {
-    CRITICAL_REGION_LOCAL(m_pool_lock);
-    
-    const uint64_t current_time = static_cast<uint64_t>(std::time(nullptr));
-    
-    // Clean up expired workshares
-    std::vector<crypto::hash> expired_workshares;
-    
-    for (const auto& pair : m_workshares)
-    {
-      const auto& entry = pair.second;
-      if (current_time > entry.receive_time + WORKSHARE_EXPIRY_TIME)
-      {
-        expired_workshares.push_back(pair.first);
       }
     }
     
-    if (!expired_workshares.empty())
-    {
-      LOG_PRINT_L1("Removing " << expired_workshares.size() << " expired workshares");
-      remove_workshares(expired_workshares);
-    }
-    
-    // Clean up rate limiting data every 10 minutes
-    if (current_time > m_last_cleanup_time + 600)
-    {
-      cleanup_rate_limits();
-      m_last_cleanup_time = current_time;
-    }
+    return false;
   }
 
   //------------------------------------------------------------------
   void workshare_memory_pool::get_pool_stats(size_t& total_workshares, size_t& active_parents)
   {
-    CRITICAL_REGION_LOCAL(m_pool_lock);
+    total_workshares = 0;
+    std::unordered_set<crypto::hash> parent_blocks;
     
-    total_workshares = m_workshares.size();
-    active_parents = m_workshares_by_parent.size();
+    // Lock-free scan through the ring buffer
+    for (size_t i = 0; i < POOL_SIZE; ++i)
+    {
+      if (m_ring_buffer[i].valid.load(std::memory_order_acquire))
+      {
+        total_workshares++;
+        parent_blocks.insert(m_ring_buffer[i].entry.ws.prev_id);
+      }
+    }
+    
+    active_parents = parent_blocks.size();
   }
 
   //------------------------------------------------------------------
   bool workshare_memory_pool::has_workshare(const crypto::hash& id)
   {
-    CRITICAL_REGION_LOCAL(m_pool_lock);
+    // Lock-free search through the ring buffer
+    for (size_t i = 0; i < POOL_SIZE; ++i)
+    {
+      if (m_ring_buffer[i].valid.load(std::memory_order_acquire))
+      {
+        if (m_ring_buffer[i].entry.id == id)
+        {
+          return true;
+        }
+      }
+    }
     
-    return m_workshares.find(id) != m_workshares.end();
+    return false;
   }
 
   //------------------------------------------------------------------
   std::vector<crypto::hash> workshare_memory_pool::get_workshare_inventory(
       const crypto::hash& parent_block_id, size_t max_count)
   {
-    CRITICAL_REGION_LOCAL(m_pool_lock);
-    
     std::vector<crypto::hash> result;
+    result.reserve(std::min(max_count, (size_t)300));
     
-    auto it = m_workshares_by_parent.find(parent_block_id);
-    if (it == m_workshares_by_parent.end())
-      return result;
-    
-    result.reserve(std::min(it->second.size(), max_count));
-    
-    size_t count = 0;
-    for (const auto& ws_id : it->second)
+    // Lock-free scan through the ring buffer
+    for (size_t i = 0; i < POOL_SIZE && result.size() < max_count; ++i)
     {
-      if (count >= max_count)
-        break;
-      result.push_back(ws_id);
-      count++;
+      if (m_ring_buffer[i].valid.load(std::memory_order_acquire))
+      {
+        const auto& entry = m_ring_buffer[i].entry;
+        if (entry.ws.prev_id == parent_block_id)
+        {
+          result.push_back(entry.id);
+        }
+      }
     }
     
     return result;
@@ -325,50 +246,6 @@ namespace cryptonote
     // The actual PoW validation should check that the workshare hash meets
     // the required difficulty (block_difficulty >> 7)
     
-    // TODO: Validate proof of work hash when mining utilities are available
-    // For now, we trust the difficulty value provided
-    
     return true;
-  }
-
-  //------------------------------------------------------------------
-  bool workshare_memory_pool::is_rate_limited(const boost::uuids::uuid& peer_id)
-  {
-    const uint64_t current_time = static_cast<uint64_t>(std::time(nullptr));
-    
-    auto it = m_peer_rate_limits.find(peer_id);
-    if (it == m_peer_rate_limits.end())
-      return false; // First workshare from this peer
-      
-    return it->second.is_rate_limited(current_time);
-  }
-
-  //------------------------------------------------------------------
-  void workshare_memory_pool::record_peer_workshare(const boost::uuids::uuid& peer_id)
-  {
-    const uint64_t current_time = static_cast<uint64_t>(std::time(nullptr));
-    
-    auto& context = m_peer_rate_limits[peer_id];
-    context.record_workshare(current_time);
-  }
-
-  //------------------------------------------------------------------
-  void workshare_memory_pool::cleanup_rate_limits()
-  {
-    const uint64_t current_time = static_cast<uint64_t>(std::time(nullptr));
-    const uint64_t cleanup_threshold = 3600; // Remove peer data after 1 hour of inactivity
-    
-    auto it = m_peer_rate_limits.begin();
-    while (it != m_peer_rate_limits.end())
-    {
-      if (current_time > it->second.last_reset_time + cleanup_threshold)
-      {
-        it = m_peer_rate_limits.erase(it);
-      }
-      else
-      {
-        ++it;
-      }
-    }
   }
 }

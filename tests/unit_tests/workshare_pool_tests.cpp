@@ -94,13 +94,12 @@ TEST_F(WorksharePoolTest, BasicPoolEntryOperations)
     crypto::hash entry_id;
     memset(&entry_id, 0x55, sizeof(entry_id));
     
-    workshare_pool_entry entry(ws, entry_id, current_time, 100);
+    workshare_pool_entry entry(ws, entry_id, current_time);
     
     // Verify pool entry fields
     EXPECT_EQ(entry.ws.nonce, 12345);
     EXPECT_EQ(entry.id, entry_id);
     EXPECT_EQ(entry.receive_time, current_time);
-    EXPECT_EQ(entry.block_height, 100);
     EXPECT_FALSE(entry.kept_by_block);
     
     // Test marking as kept by block
@@ -116,7 +115,7 @@ TEST_F(WorksharePoolTest, PoolEntrySerialization)
     crypto::hash entry_id;
     memset(&entry_id, 0x66, sizeof(entry_id));
     
-    workshare_pool_entry entry1(ws, entry_id, current_time, 200);
+    workshare_pool_entry entry1(ws, entry_id, current_time);
     entry1.kept_by_block = true;
     
     // Serialize
@@ -132,7 +131,6 @@ TEST_F(WorksharePoolTest, PoolEntrySerialization)
     EXPECT_EQ(entry2.ws.nonce, entry1.ws.nonce);
     EXPECT_EQ(entry2.id, entry1.id);
     EXPECT_EQ(entry2.receive_time, entry1.receive_time);
-    EXPECT_EQ(entry2.block_height, entry1.block_height);
     EXPECT_EQ(entry2.kept_by_block, entry1.kept_by_block);
 }
 
@@ -157,7 +155,7 @@ TEST_F(WorksharePoolTest, PoolSizeLimits)
         crypto::hash entry_id;
         memset(&entry_id, static_cast<int>(i), sizeof(entry_id));
         
-        workshare_pool_entry entry(ws, entry_id, current_time + i, 100 + i);
+        workshare_pool_entry entry(ws, entry_id, current_time + i);
         simulated_pool.push_back(entry);
     }
     
@@ -187,21 +185,21 @@ TEST_F(WorksharePoolTest, PoolExpiryLogic)
     workshare ws_fresh = create_test_workshare(1, current_time);
     crypto::hash id_fresh;
     memset(&id_fresh, 0x01, sizeof(id_fresh));
-    pool_entries.emplace_back(ws_fresh, id_fresh, current_time, 100);
+    pool_entries.emplace_back(ws_fresh, id_fresh, current_time);
     
     // Old workshare (should expire)
     uint64_t old_time = current_time - expiry_time - 1;
     workshare ws_old = create_test_workshare(2, old_time);
     crypto::hash id_old;
     memset(&id_old, 0x02, sizeof(id_old));
-    pool_entries.emplace_back(ws_old, id_old, old_time, 99);
+    pool_entries.emplace_back(ws_old, id_old, old_time);
     
     // Borderline workshare (exactly at expiry)
     uint64_t borderline_time = current_time - expiry_time;
     workshare ws_borderline = create_test_workshare(3, borderline_time);
     crypto::hash id_borderline;
     memset(&id_borderline, 0x03, sizeof(id_borderline));
-    pool_entries.emplace_back(ws_borderline, id_borderline, borderline_time, 99);
+    pool_entries.emplace_back(ws_borderline, id_borderline, borderline_time);
     
     // Simulate expiry check
     std::vector<workshare_pool_entry> non_expired;
@@ -230,7 +228,7 @@ TEST_F(WorksharePoolTest, DuplicateDetection)
     crypto::hash id1;
     memset(&id1, 0x10, sizeof(id1));
     
-    pool_entries.emplace_back(ws1, id1, current_time, 100);
+    pool_entries.emplace_back(ws1, id1, current_time);
     existing_ids.insert(id1);
     
     // Try to add duplicate (same ID)
@@ -247,7 +245,7 @@ TEST_F(WorksharePoolTest, DuplicateDetection)
     if (is_unique)
     {
         workshare ws3 = create_test_workshare(300);
-        pool_entries.emplace_back(ws3, id3, current_time, 101);
+        pool_entries.emplace_back(ws3, id3, current_time);
         existing_ids.insert(id3);
     }
     
@@ -270,28 +268,19 @@ TEST_F(WorksharePoolTest, PoolOrdering)
         
         // Use different heights
         uint64_t height = 1000 + (i % 3); // Heights: 1000, 1001, 1002, 1000, 1001
-        pool_entries.emplace_back(ws, id, current_time + i, height);
+        pool_entries.emplace_back(ws, id, current_time + i);
     }
     
     // Sort by height (descending), then by time (ascending)
     std::sort(pool_entries.begin(), pool_entries.end(), 
               [](const workshare_pool_entry& a, const workshare_pool_entry& b) {
-                  if (a.block_height != b.block_height)
-                      return a.block_height > b.block_height; // Higher height first
                   return a.receive_time < b.receive_time; // Earlier time first
               });
     
-    // Verify ordering
-    EXPECT_GE(pool_entries[0].block_height, pool_entries[1].block_height);
-    EXPECT_GE(pool_entries[1].block_height, pool_entries[2].block_height);
-    
-    // Within same height, earlier time should come first
+    // Verify ordering - earlier time should come first
     for (size_t i = 1; i < pool_entries.size(); ++i)
     {
-        if (pool_entries[i-1].block_height == pool_entries[i].block_height)
-        {
-            EXPECT_LE(pool_entries[i-1].receive_time, pool_entries[i].receive_time);
-        }
+        EXPECT_LE(pool_entries[i-1].receive_time, pool_entries[i].receive_time);
     }
 }
 
@@ -308,7 +297,7 @@ TEST_F(WorksharePoolTest, BlockInclusionSimulation)
         crypto::hash id;
         memset(&id, 0x20 + i, sizeof(id));
         
-        pool_entries.emplace_back(ws, id, current_time, 500);
+        pool_entries.emplace_back(ws, id, current_time);
     }
     
     // Simulate block creation - select best workshares
