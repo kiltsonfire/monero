@@ -61,6 +61,7 @@
 #include "common/varint.h"
 #include "common/pruning.h"
 #include "common/data_cache.h"
+#include "common/stack_trace.h"
 #include "time_helper.h"
 
 #undef MONERO_DEFAULT_LOG_CATEGORY
@@ -4095,6 +4096,8 @@ bool Blockchain::handle_block_to_main_chain(const block& bl, const crypto::hash&
   block_verification_context& bvc, pool_supplement& extra_block_txs)
 {
   LOG_PRINT_L3("Blockchain::" << __func__);
+  MINFO("Processing block " << id << " for main chain at height " << get_block_height(bl) 
+        << " with " << bl.workshare_hashes.size() << " workshares");
 
   TIME_MEASURE_START(block_processing_time);
   CRITICAL_REGION_LOCAL(m_blockchain_lock);
@@ -4511,8 +4514,15 @@ leave:
       {
         MINFO("Processing " << bl.workshare_hashes.size() << " workshares for block at height " << blockchain_height);
         std::vector<workshare> workshares_to_store;
+        size_t ws_index = 0;
         for (const auto& ws_hash : bl.workshare_hashes)
         {
+          // Log progress every 10 workshares
+          if (ws_index % 10 == 0)
+          {
+            MINFO("Processing workshare " << ws_index << " / " << bl.workshare_hashes.size() << " (hash: " << ws_hash << ")");
+          }
+          
           // First try to get workshare from the pool supplement (workshares sent with the block)
           auto ws_it = extra_block_txs.workshares_by_hash.find(ws_hash);
           if (ws_it != extra_block_txs.workshares_by_hash.end())
@@ -4550,28 +4560,71 @@ leave:
             bvc.m_verifivation_failed = true;
             return false;
           }
+          
+          ws_index++;
         }
         
         if (!workshares_to_store.empty())
         {
-          // Store workshares indexed by the parent block hash (bl.prev_id)
-          m_db->add_workshares(bl.prev_id, workshares_to_store);
+          MINFO("Storing " << workshares_to_store.size() << " workshares to database for parent block " << bl.prev_id);
+          try {
+            // Store workshares indexed by the parent block hash (bl.prev_id)
+            m_db->add_workshares(bl.prev_id, workshares_to_store);
+            MINFO("Database storage complete");
+          }
+          catch (const std::exception& e) {
+            MERROR("Exception storing workshares to database: " << e.what());
+            tools::log_stack_trace("Database workshare storage exception:");
+            throw;
+          }
           
           // Also add workshares to the pool so they're available for relaying
           // This handles workshares we receive from other nodes
           if (m_workshare_pool)
           {
-            for (const auto& ws : workshares_to_store)
-            {
-              crypto::hash ws_hash = get_workshare_hash(ws);
-              workshare_verification_context wvc = {};
-              // add_workshare handles duplicates gracefully (returns false but doesn't error)
-              // Use nil UUID since these are from blocks, not directly from peers
-              m_workshare_pool->add_workshare(ws, ws_hash, boost::uuids::nil_uuid(), wvc);
-              // We don't care about the result - duplicates are fine
+            MINFO("Adding " << workshares_to_store.size() << " workshares to pool, pool ptr: " << (void*)m_workshare_pool);
+            size_t added_count = 0;
+            try {
+              for (const auto& ws : workshares_to_store)
+              {
+                crypto::hash ws_hash = get_workshare_hash(ws);
+                MDEBUG("Adding workshare " << added_count << " with hash " << ws_hash);
+                MDEBUG("Workshare details: nonce=" << ws.nonce << ", prev_id=" << ws.prev_id
+                       << ", timestamp=" << ws.timestamp << ", workshare_count=" << ws.workshare_count);
+                workshare_verification_context wvc = {};
+                // add_workshare handles duplicates gracefully (returns false but doesn't error)
+                // Use nil UUID since these are from blocks, not directly from peers
+                MDEBUG("About to call add_workshare, pool ptr: " << (void*)m_workshare_pool);
+                bool added = false;
+                try {
+                  added = m_workshare_pool->add_workshare(ws, ws_hash, boost::uuids::nil_uuid(), wvc);
+                  MDEBUG("add_workshare returned: " << added);
+                }
+                catch (const std::exception& e) {
+                  MERROR("Exception in add_workshare for workshare " << added_count << ": " << e.what());
+                  tools::log_stack_trace("add_workshare exception:");
+                  throw;
+                }
+                MDEBUG("Workshare " << ws_hash << " add result: " << added 
+                       << ", already_exists: " << wvc.m_already_exists 
+                       << ", pool_full: " << wvc.m_pool_full);
+                // We don't care about the result - duplicates are fine
+                added_count++;
+                if (added_count % 20 == 0)
+                {
+                  MINFO("Added " << added_count << " / " << workshares_to_store.size() << " workshares to pool");
+                }
+              }
             }
+            catch (const std::exception& e) {
+              MERROR("Exception adding workshare " << added_count << " to pool: " << e.what());
+              tools::log_stack_trace("Workshare pool addition exception:");
+              throw;
+            }
+            MINFO("Finished adding all workshares to pool");
           }
         }
+        MINFO("Workshare processing complete for block at height " << blockchain_height);
       }
       
       cryptonote::blobdata bd = cryptonote::block_to_blob(bl);
@@ -4622,6 +4675,9 @@ leave:
 
   bvc.m_added_to_main_chain = true;
   ++m_sync_counter;
+  
+  MINFO("Successfully added block " << id << " at height " << new_height - 1 
+        << " to main chain with " << bl.workshare_hashes.size() << " workshares");
 
   // appears to be a NOP *and* is called elsewhere.  wat?
   m_tx_pool.on_blockchain_inc(new_height, id);
@@ -4793,7 +4849,7 @@ bool Blockchain::add_new_block(const block& bl, block_verification_context& bvc,
   db_rtxn_guard rtxn_guard(m_db);
   if(have_block(id))
   {
-    LOG_PRINT_L3("block with id = " << id << " already exists");
+    MINFO("Block with id = " << id << " already exists at height " << get_block_height(bl));
     bvc.m_already_exists = true;
     return false;
   }
@@ -4802,6 +4858,9 @@ bool Blockchain::add_new_block(const block& bl, block_verification_context& bvc,
   if(!(bl.prev_id == get_tail_id()))
   {
     //chain switching or wrong block
+    MINFO("Block " << id << " at height " << get_block_height(bl) 
+          << " does not refer to chain tail (prev_id: " << bl.prev_id 
+          << ", our tail: " << get_tail_id() << "), treating as alternative");
     bvc.m_added_to_main_chain = false;
     rtxn_guard.stop();
     return handle_alternative_block(bl, id, bvc, extra_block_txs);

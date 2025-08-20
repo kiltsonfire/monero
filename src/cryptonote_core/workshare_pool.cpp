@@ -53,14 +53,16 @@ namespace cryptonote
                                             const boost::uuids::uuid& peer_id, 
                                             workshare_verification_context& tvc)
   {
+    MDEBUG("[add_workshare] Starting - id: " << id << ", peer_id: " << peer_id);
     CRITICAL_REGION_LOCAL(m_pool_lock);
+    MDEBUG("[add_workshare] Acquired lock");
     
     const uint64_t current_time = static_cast<uint64_t>(std::time(nullptr));
     
     // Check rate limiting (skip for local workshares)
     if (!peer_id.is_nil() && is_rate_limited(peer_id))
     {
-      LOG_PRINT_L2("Workshare " << id << " rejected due to rate limiting from peer " << peer_id);
+      MINFO("Workshare " << id << " rejected due to rate limiting from peer " << peer_id);
       tvc.m_pool_full = true;
       return false;
     }
@@ -68,7 +70,7 @@ namespace cryptonote
     // Check if already exists
     if (m_workshares.find(id) != m_workshares.end())
     {
-      LOG_PRINT_L2("Workshare " << id << " already exists in pool");
+      MDEBUG("Workshare " << id << " already exists in pool");
       tvc.m_already_exists = true;
       return false;
     }
@@ -93,25 +95,33 @@ namespace cryptonote
     
     // Get block height for the entry (from prev_id)
     uint64_t block_height = 0;
+    MDEBUG("[add_workshare] Getting block height for prev_id: " << ws.prev_id);
     try
     {
       block_height = m_blockchain.get_db().get_block_height(ws.prev_id);
+      MDEBUG("[add_workshare] Got block height: " << block_height);
     }
-    catch (const std::exception&)
+    catch (const std::exception& e)
     {
+      MERROR("[add_workshare] Exception getting block height for prev_id " << ws.prev_id << ": " << e.what());
       LOG_PRINT_L2("Workshare " << id << " references unknown block " << ws.prev_id);
       tvc.m_unknown_block = true;
       return false;
     }
     
     // Create pool entry
+    MDEBUG("[add_workshare] Creating pool entry");
     workshare_pool_entry entry(ws, id, current_time, block_height);
     
     // Add to main storage
+    MDEBUG("[add_workshare] Adding to m_workshares map, current size: " << m_workshares.size());
     m_workshares[id] = entry;
+    MDEBUG("[add_workshare] Added to m_workshares, new size: " << m_workshares.size());
     
     // Add to parent index
+    MDEBUG("[add_workshare] Adding to parent index for prev_id: " << ws.prev_id);
     m_workshares_by_parent[ws.prev_id].insert(id);
+    MDEBUG("[add_workshare] Added to parent index, parent now has " << m_workshares_by_parent[ws.prev_id].size() << " workshares");
     
     // Record rate limiting (skip for local workshares)
     if (!peer_id.is_nil())

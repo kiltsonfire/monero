@@ -538,7 +538,8 @@ namespace cryptonote
     const size_t MAX_WORKSHARES_PER_BLOCK = 300;
     if (m_template.workshare_hashes.size() >= MAX_WORKSHARES_PER_BLOCK)
     {
-      MDEBUG("Block template already has maximum workshares");
+      MWARNING("Mining template already has " << m_template.workshare_hashes.size() 
+               << " workshares (max: " << MAX_WORKSHARES_PER_BLOCK << "), not adding more");
       return;
     }
     
@@ -566,8 +567,21 @@ namespace cryptonote
     block b;
     slow_hash_allocate_state();
     ++m_threads_active;
+    uint64_t loop_count = 0;
+    auto last_heartbeat = std::chrono::steady_clock::now();
     while(!m_stop)
     {
+      // Heartbeat logging every 10 seconds
+      auto now = std::chrono::steady_clock::now();
+      if (std::chrono::duration_cast<std::chrono::seconds>(now - last_heartbeat).count() >= 10)
+      {
+        MDEBUG("Miner thread " << th_local_index << " heartbeat - loops: " << loop_count 
+               << ", template: " << local_template_ver << ", paused: " << (m_pausers_count > 0));
+        last_heartbeat = now;
+        loop_count = 0;
+      }
+      loop_count++;
+      
       if(m_pausers_count)//anti split workaround
       {
         misc_utils::sleep_no_w(100);

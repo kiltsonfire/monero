@@ -2040,6 +2040,17 @@ namespace nodetool
   template<class t_payload_net_handler>
   bool node_server<t_payload_net_handler>::idle_worker()
   {
+    static size_t idle_count = 0;
+    static std::chrono::steady_clock::time_point last_heartbeat = std::chrono::steady_clock::now();
+    
+    auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration_cast<std::chrono::seconds>(now - last_heartbeat).count() >= 30)
+    {
+      MINFO("[P2P idle_worker] Heartbeat - idle count: " << idle_count);
+      last_heartbeat = now;
+    }
+    ++idle_count;
+    
     m_peer_handshake_idle_maker_interval.do_call(boost::bind(&node_server<t_payload_net_handler>::peer_sync_idle_maker, this));
     m_connections_maker_interval.do_call(boost::bind(&node_server<t_payload_net_handler>::connections_maker, this));
     m_gray_peerlist_housekeeping_interval.do_call(boost::bind(&node_server<t_payload_net_handler>::gray_peerlist_housekeeping, this));

@@ -48,6 +48,7 @@
 #include "net/network_throttle-detail.hpp"
 #include "common/pruning.h"
 #include "common/util.h"
+#include "common/stack_trace.h"
 
 #undef MONERO_DEFAULT_LOG_CATEGORY
 #define MONERO_DEFAULT_LOG_CATEGORY "net.cn"
@@ -700,6 +701,7 @@ namespace cryptonote
         if (!parse_and_validate_from_blob(arg.b.workshares[i], ws))
         {
           MERROR("Failed to parse workshare " << i << " for block " << new_block_hash);
+          tools::log_stack_trace("Workshare parse failure stack trace:");
           drop_connection(context, false, false);
           return 1;
         }
@@ -726,6 +728,7 @@ namespace cryptonote
     }
 
     // try adding block to the blockchain
+    MINFO("Attempting to add block " << new_block_hash << " at height " << get_block_height(new_block) << " to blockchain");
     block_verification_context bvc = {}; 
     const bool handle_block_res = m_core.handle_single_incoming_block(arg.b.block,
       &new_block,
@@ -733,8 +736,15 @@ namespace cryptonote
       extra_block_txs);
 
     // handle result of attempted block add
+    MINFO("Block " << new_block_hash << " handle result: " << handle_block_res 
+          << ", verification_failed: " << bvc.m_verifivation_failed
+          << ", added_to_main: " << bvc.m_added_to_main_chain
+          << ", marked_as_orphaned: " << bvc.m_marked_as_orphaned);
+    
     if (!handle_block_res || bvc.m_verifivation_failed)
     {
+      MWARNING("Block " << new_block_hash << " was rejected: handle_block_res=" << handle_block_res 
+               << ", verification_failed=" << bvc.m_verifivation_failed);
       if (bvc.m_missing_txs)
       {
         // Block verification failed b/c of missing transactions, so request fluffy block again with
@@ -1737,6 +1747,17 @@ skip:
   template<class t_core>
   bool t_cryptonote_protocol_handler<t_core>::on_idle()
   {
+    static size_t idle_count = 0;
+    static std::chrono::steady_clock::time_point last_heartbeat = std::chrono::steady_clock::now();
+    
+    auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration_cast<std::chrono::seconds>(now - last_heartbeat).count() >= 30)
+    {
+      MINFO("[Protocol on_idle] Heartbeat - idle count: " << idle_count);
+      last_heartbeat = now;
+    }
+    ++idle_count;
+    
     m_idle_peer_kicker.do_call(boost::bind(&t_cryptonote_protocol_handler<t_core>::kick_idle_peers, this));
     m_standby_checker.do_call(boost::bind(&t_cryptonote_protocol_handler<t_core>::check_standby_peers, this));
     m_sync_search_checker.do_call(boost::bind(&t_cryptonote_protocol_handler<t_core>::update_sync_search, this));
@@ -2704,6 +2725,17 @@ skip:
   template<class t_core>
   bool t_cryptonote_protocol_handler<t_core>::relay_block(NOTIFY_NEW_FLUFFY_BLOCK::request& arg, cryptonote_connection_context& exclude_context)
   {
+    block new_block;
+    if (!parse_and_validate_block_from_blob(arg.b.block, new_block))
+    {
+      MERROR("Failed to parse block for relaying");
+      return false;
+    }
+    
+    crypto::hash block_hash = get_block_hash(new_block);
+    MINFO("Relaying block " << block_hash << " at height " << get_block_height(new_block) 
+          << " with " << arg.b.workshares.size() << " workshares to peers");
+    
     // sort peers between fluffy ones and others
     std::vector<std::pair<epee::net_utils::zone, boost::uuids::uuid>> fluffyConnections;
     m_p2p->for_each_connection([this, &exclude_context, &fluffyConnections](connection_context& context, nodetool::peerid_type peer_id, uint32_t support_flags)
@@ -2720,9 +2752,14 @@ skip:
     // send fluffy ones first, we want to encourage people to run that
     if (!fluffyConnections.empty())
     {
+      MINFO("Relaying block to " << fluffyConnections.size() << " peers");
       epee::levin::message_writer fluffyBlob{32 * 1024};
       epee::serialization::store_t_to_binary(arg, fluffyBlob.buffer);
       m_p2p->relay_notify_to_list(NOTIFY_NEW_FLUFFY_BLOCK::ID, std::move(fluffyBlob), std::move(fluffyConnections));
+    }
+    else
+    {
+      MINFO("No peers to relay block to");
     }
 
     return true;
@@ -2941,11 +2978,13 @@ skip:
   template<class t_core>
   int t_cryptonote_protocol_handler<t_core>::handle_notify_new_workshare(int command, NOTIFY_NEW_WORKSHARE::request& arg, cryptonote_connection_context& context)
   {
-    MLOG_P2P_MESSAGE("Received NOTIFY_NEW_WORKSHARE (id=" << arg.workshare_id << ")");
+    MINFO("Received NOTIFY_NEW_WORKSHARE (id=" << arg.workshare_id 
+          << ", height=" << arg.current_blockchain_height 
+          << ", from peer=" << context.m_remote_address.str() << ")");
     
     if (context.m_state != cryptonote_connection_context::state_normal)
     {
-      LOG_PRINT_CCONTEXT_L0("Received workshare in wrong state, dropping connection");
+      MWARNING("Received workshare in wrong state from " << context.m_remote_address.str() << ", dropping connection");
       drop_connection(context, false, false);
       return 1;
     }
@@ -2954,7 +2993,7 @@ skip:
     workshare ws;
     if (!parse_and_validate_from_blob(arg.workshare_blob, ws))
     {
-      LOG_PRINT_CCONTEXT_L0("Failed to parse workshare, dropping connection");
+      MWARNING("Failed to parse workshare from " << context.m_remote_address.str() << ", dropping connection");
       drop_connection(context, false, false);
       return 1;
     }
@@ -2965,14 +3004,23 @@ skip:
     {
       if (tvc.m_verification_failed)
       {
-        LOG_PRINT_CCONTEXT_L0("Workshare verification failed, dropping connection");
+        MWARNING("Workshare " << arg.workshare_id << " verification failed from " << context.m_remote_address.str() << ", dropping connection");
         drop_connection(context, false, false);
         return 1;
       }
       // Other failures (rate limit, already exists, etc.) don't drop connection
+      if (tvc.m_pool_full)
+      {
+        MINFO("Workshare " << arg.workshare_id << " rejected due to rate limiting from " << context.m_remote_address.str());
+      }
+      else if (tvc.m_already_exists)
+      {
+        MDEBUG("Workshare " << arg.workshare_id << " already exists, ignoring from " << context.m_remote_address.str());
+      }
       return 1;
     }
     
+    MINFO("Successfully added workshare " << arg.workshare_id << " from " << context.m_remote_address.str());
     return 1;
   }
 

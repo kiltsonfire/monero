@@ -1686,6 +1686,17 @@ namespace cryptonote
   //-----------------------------------------------------------------------------------------------
   bool core::on_idle()
   {
+    static size_t idle_count = 0;
+    static std::chrono::steady_clock::time_point last_heartbeat = std::chrono::steady_clock::now();
+    
+    auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration_cast<std::chrono::seconds>(now - last_heartbeat).count() >= 30)
+    {
+      MINFO("[Core on_idle] Heartbeat - idle count: " << idle_count << ", blockchain height: " << m_blockchain_storage.get_current_blockchain_height());
+      last_heartbeat = now;
+    }
+    ++idle_count;
+    
     if(!m_starter_message_showed)
     {
       std::string main_message;
