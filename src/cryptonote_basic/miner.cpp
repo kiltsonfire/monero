@@ -145,6 +145,7 @@ namespace cryptonote
   bool miner::set_block_template(const block& bl, const difficulty_type& di, uint64_t height, uint64_t block_reward)
   {
     CRITICAL_REGION_LOCAL(m_template_lock);
+    LOG_PRINT_L1("Setting block template at height " << height << " with " << bl.workshare_hashes.size() << " workshares from blockchain");
     m_template = bl;
     m_diffic = di;
     m_height = height;
@@ -566,6 +567,8 @@ namespace cryptonote
     }
     
     // Add workshare to the template
+    LOG_PRINT_L2("Adding workshare to template. Template had " << m_template.workshare_hashes.size() 
+                 << " workshares, adding 1 more");
     m_template.workshare_hashes.push_back(ws_id);
     m_template.workshare_count = m_template.workshare_hashes.size();
     

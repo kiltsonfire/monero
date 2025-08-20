@@ -1658,6 +1658,8 @@ bool Blockchain::create_block_template(block& b, const crypto::hash *from_block,
     std::vector<workshare_pool_entry> workshares = m_workshare_pool->get_workshares_for_parent(
       b.prev_id, MAX_WORKSHARES_PER_BLOCK);
     
+    LOG_PRINT_L1("Blockchain creating template: found " << workshares.size() << " workshares in pool for parent " << b.prev_id);
+    
     // Add workshare hashes to the block
     b.workshare_hashes.clear();
     b.workshare_hashes.reserve(workshares.size());
@@ -1672,7 +1674,7 @@ bool Blockchain::create_block_template(block& b, const crypto::hash *from_block,
     // Update workshare count in header
     b.workshare_count = b.workshare_hashes.size();
     
-    MDEBUG("Added " << b.workshare_count << " workshares to block template, weight: " << workshares_weight);
+    LOG_PRINT_L1("Blockchain template includes " << b.workshare_count << " workshares, weight: " << workshares_weight);
   }
   
 #if defined(DEBUG_CREATE_BLOCK_TEMPLATE)
