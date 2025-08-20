@@ -4098,17 +4098,29 @@ bool Blockchain::handle_block_to_main_chain(const block& bl, const crypto::hash&
   LOG_PRINT_L3("Blockchain::" << __func__);
   MINFO("Processing block " << id << " for main chain at height " << get_block_height(bl) 
         << " with " << bl.workshare_hashes.size() << " workshares");
+  MINFO("DEBUG 1: About to start TIME_MEASURE_START");
 
   TIME_MEASURE_START(block_processing_time);
+  MINFO("DEBUG 2: Started block_processing_time");
+  MINFO("DEBUG 3: About to acquire blockchain lock");
   CRITICAL_REGION_LOCAL(m_blockchain_lock);
+  MINFO("DEBUG 4: Acquired blockchain lock");
   TIME_MEASURE_START(t1);
+  MINFO("DEBUG 5: Started t1 timer");
 
   static bool seen_future_version = false;
+  MINFO("DEBUG 6: Set seen_future_version");
+  MINFO("DEBUG 7: About to create db_rtxn_guard");
 
   db_rtxn_guard rtxn_guard(m_db);
+  MINFO("DEBUG 8: Created db_rtxn_guard");
   uint64_t blockchain_height;
+  MINFO("DEBUG 9: About to call get_tail_id");
   const crypto::hash top_hash = get_tail_id(blockchain_height);
+  MINFO("DEBUG 10: Got tail_id, blockchain_height=" << blockchain_height << ", top_hash=" << top_hash);
   ++blockchain_height; // block height to chain height
+  MINFO("DEBUG 11: Incremented blockchain_height to " << blockchain_height);
+  MINFO("DEBUG 12: Checking prev_id, bl.prev_id=" << bl.prev_id << ", top_hash=" << top_hash);
   if(bl.prev_id != top_hash)
   {
     MERROR_VER("Block with id: " << id << std::endl << "has wrong prev_id: " << bl.prev_id << std::endl << "expected: " << top_hash);
@@ -4116,8 +4128,10 @@ bool Blockchain::handle_block_to_main_chain(const block& bl, const crypto::hash&
 leave:
     return false;
   }
+  MINFO("DEBUG 13: Passed prev_id check");
 
   // warn users if they're running an old version
+  MINFO("DEBUG 14: About to check version");
   if (!seen_future_version && bl.major_version > m_hardfork->get_ideal_version())
   {
     seen_future_version = true;
@@ -4128,46 +4142,64 @@ leave:
     MCLOG_RED(level, "global", "update may be required to sync further. Try running: update check");
     MCLOG_RED(level, "global", "**********************************************************************");
   }
+  MINFO("DEBUG 15: Passed version warning check");
 
   // this is a cheap test
+  MINFO("DEBUG 16: About to get_current_hard_fork_version");
   const uint8_t hf_version = get_current_hard_fork_version();
+  MINFO("DEBUG 17: Got hf_version=" << (unsigned)hf_version);
+  MINFO("DEBUG 18: About to check hardfork->check(bl)");
   if (!m_hardfork->check(bl))
   {
     MERROR_VER("Block with id: " << id << std::endl << "has old version: " << (unsigned)bl.major_version << std::endl << "current: " << (unsigned)hf_version);
     bvc.m_verifivation_failed = true;
     goto leave;
   }
+  MINFO("DEBUG 19: Passed hardfork check");
 
   TIME_MEASURE_FINISH(t1);
+  MINFO("DEBUG 20: Finished t1 timer");
   TIME_MEASURE_START(t2);
+  MINFO("DEBUG 21: Started t2 timer");
 
   // make sure block timestamp is not less than the median timestamp
   // of a set number of the most recent blocks.
+  MINFO("DEBUG 22: About to check_block_timestamp");
   if(!check_block_timestamp(bl))
   {
     MERROR_VER("Block with id: " << id << std::endl << "has invalid timestamp: " << bl.timestamp);
     bvc.m_verifivation_failed = true;
     goto leave;
   }
+  MINFO("DEBUG 23: Passed timestamp check");
 
   TIME_MEASURE_FINISH(t2);
+  MINFO("DEBUG 24: Finished t2 timer");
   //check proof of work
   TIME_MEASURE_START(target_calculating_time);
+  MINFO("DEBUG 25: Started target_calculating_time timer");
 
   // get the target difficulty for the block.
   // the calculation can overflow, among other failure cases,
   // so we need to check the return type.
   // FIXME: get_difficulty_for_next_block can also assert, look into
   // changing this to throwing exceptions instead so we can clean up.
+  MINFO("DEBUG 26: About to get_difficulty_for_next_block");
   difficulty_type current_diffic = get_difficulty_for_next_block();
+  MINFO("DEBUG 27: Got difficulty=" << current_diffic);
   CHECK_AND_ASSERT_MES(current_diffic, false, "!!!!!!!!! difficulty overhead !!!!!!!!!");
+  MINFO("DEBUG 28: Passed difficulty check");
 
   TIME_MEASURE_FINISH(target_calculating_time);
+  MINFO("DEBUG 29: Finished target_calculating_time");
 
   TIME_MEASURE_START(longhash_calculating_time);
+  MINFO("DEBUG 30: Started longhash_calculating_time");
 
   crypto::hash proof_of_work;
+  MINFO("DEBUG 31: Created proof_of_work hash");
   memset(proof_of_work.data, 0xff, sizeof(proof_of_work.data));
+  MINFO("DEBUG 32: Memset proof_of_work");
 
   // Formerly the code below contained an if loop with the following condition
   // !m_checkpoints.is_in_checkpoint_zone(get_current_blockchain_height())
@@ -4178,9 +4210,12 @@ leave:
   // FIXME: height parameter is not used...should it be used or should it not
   // be a parameter?
   // validate proof_of_work versus difficulty target
+  MINFO("DEBUG 33: About to check proof_of_work");
   bool precomputed = false;
   bool fast_check = false;
+  MINFO("DEBUG 34: Set precomputed and fast_check flags");
 #if defined(PER_BLOCK_CHECKPOINT)
+  MINFO("DEBUG 35: Checking PER_BLOCK_CHECKPOINT");
   if (blockchain_height < m_blocks_hash_check.size())
   {
     const auto &expected_hash = m_blocks_hash_check[blockchain_height].first;
@@ -4200,8 +4235,10 @@ leave:
     }
   }
 #endif
+  MINFO("DEBUG 36: After PER_BLOCK_CHECKPOINT check, fast_check=" << fast_check);
   if (!fast_check)
   {
+    MINFO("DEBUG 37: Not fast_check, looking for cached longhash");
     auto it = m_blocks_longhash_table.find(id);
     if (it != m_blocks_longhash_table.end())
     {
@@ -4209,9 +4246,14 @@ leave:
       proof_of_work = it->second;
     }
     else
+    {
+      MINFO("DEBUG 38: No cached longhash, calling get_block_longhash");
       proof_of_work = get_block_longhash(this, bl, blockchain_height, 0);
+      MINFO("DEBUG 39: Got block longhash");
+    }
 
     // validate proof_of_work versus difficulty target
+    MINFO("DEBUG 40: About to check_hash for proof_of_work");
     if(!check_hash(proof_of_work, current_diffic))
     {
       MERROR_VER("Block with id: " << id << std::endl << "does not have enough proof of work: " << proof_of_work << " at height " << blockchain_height << ", unexpected difficulty: " << current_diffic);
@@ -4578,51 +4620,9 @@ leave:
             throw;
           }
           
-          // Also add workshares to the pool so they're available for relaying
-          // This handles workshares we receive from other nodes
-          if (m_workshare_pool)
-          {
-            MINFO("Adding " << workshares_to_store.size() << " workshares to pool, pool ptr: " << (void*)m_workshare_pool);
-            size_t added_count = 0;
-            try {
-              for (const auto& ws : workshares_to_store)
-              {
-                crypto::hash ws_hash = get_workshare_hash(ws);
-                MDEBUG("Adding workshare " << added_count << " with hash " << ws_hash);
-                MDEBUG("Workshare details: nonce=" << ws.nonce << ", prev_id=" << ws.prev_id
-                       << ", timestamp=" << ws.timestamp << ", workshare_count=" << ws.workshare_count);
-                workshare_verification_context wvc = {};
-                // add_workshare handles duplicates gracefully (returns false but doesn't error)
-                // Use nil UUID since these are from blocks, not directly from peers
-                MDEBUG("About to call add_workshare, pool ptr: " << (void*)m_workshare_pool);
-                bool added = false;
-                try {
-                  added = m_workshare_pool->add_workshare(ws, ws_hash, boost::uuids::nil_uuid(), wvc);
-                  MDEBUG("add_workshare returned: " << added);
-                }
-                catch (const std::exception& e) {
-                  MERROR("Exception in add_workshare for workshare " << added_count << ": " << e.what());
-                  tools::log_stack_trace("add_workshare exception:");
-                  throw;
-                }
-                MDEBUG("Workshare " << ws_hash << " add result: " << added 
-                       << ", already_exists: " << wvc.m_already_exists 
-                       << ", pool_full: " << wvc.m_pool_full);
-                // We don't care about the result - duplicates are fine
-                added_count++;
-                if (added_count % 20 == 0)
-                {
-                  MINFO("Added " << added_count << " / " << workshares_to_store.size() << " workshares to pool");
-                }
-              }
-            }
-            catch (const std::exception& e) {
-              MERROR("Exception adding workshare " << added_count << " to pool: " << e.what());
-              tools::log_stack_trace("Workshare pool addition exception:");
-              throw;
-            }
-            MINFO("Finished adding all workshares to pool");
-          }
+          // NOTE: We do NOT add workshares from received blocks to the pool
+          // Workshares in a mined block are already committed and immutable
+          // The pool is only for pending workshares that haven't been included in a block yet
         }
         MINFO("Workshare processing complete for block at height " << blockchain_height);
       }

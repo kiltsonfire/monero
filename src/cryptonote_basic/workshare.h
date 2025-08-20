@@ -163,22 +163,19 @@ namespace cryptonote
     workshare ws;                   // The workshare data (identical to block_header)
     crypto::hash id;               // Hash of workshare
     uint64_t receive_time;         // Unix timestamp when received
-    uint64_t block_height;         // Height of the block this workshare references
     bool kept_by_block;            // True if included in a block
     
     workshare_pool_entry():
       ws(),
       id(crypto::null_hash),
       receive_time(0),
-      block_height(0),
       kept_by_block(false)
     {}
     
-    workshare_pool_entry(const workshare& _ws, const crypto::hash& _id, uint64_t _receive_time, uint64_t _block_height):
+    workshare_pool_entry(const workshare& _ws, const crypto::hash& _id, uint64_t _receive_time):
       ws(_ws),
       id(_id),
       receive_time(_receive_time),
-      block_height(_block_height),
       kept_by_block(false)
     {}
     
@@ -186,7 +183,6 @@ namespace cryptonote
       FIELD(ws)
       FIELD(id)
       VARINT_FIELD(receive_time)
-      VARINT_FIELD(block_height)
       FIELD(kept_by_block)
     END_SERIALIZE()
   };

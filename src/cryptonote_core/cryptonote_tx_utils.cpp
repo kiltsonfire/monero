@@ -706,8 +706,14 @@ namespace cryptonote
 
   bool get_block_longhash(const Blockchain *pbc, const block& b, crypto::hash& res, const uint64_t height, const crypto::hash *seed_hash, const int miners)
   {
+    LOG_PRINT_L0("[get_block_longhash] Starting, height=" << height << ", tx_hashes.size()=" << b.tx_hashes.size() << ", workshare_hashes.size()=" << b.workshare_hashes.size());
+    LOG_PRINT_L0("[get_block_longhash] About to call get_block_hashing_blob");
     blobdata bd = get_block_hashing_blob(b);
-	return get_block_longhash(pbc, bd, res, height, b.major_version, seed_hash, miners);
+    LOG_PRINT_L0("[get_block_longhash] Got hashing blob, size=" << bd.size());
+    LOG_PRINT_L0("[get_block_longhash] About to call overload get_block_longhash");
+	bool result = get_block_longhash(pbc, bd, res, height, b.major_version, seed_hash, miners);
+    LOG_PRINT_L0("[get_block_longhash] Returned from overload, result=" << result);
+    return result;
   }
 
   crypto::hash get_block_longhash(const Blockchain *pbc, const block& b, const uint64_t height, const crypto::hash *seed_hash, const int miners)

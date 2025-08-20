@@ -1443,10 +1443,27 @@ namespace cryptonote
   //---------------------------------------------------------------
   blobdata get_block_hashing_blob(const block& b)
   {
+    LOG_PRINT_L0("[get_block_hashing_blob] Starting, tx_hashes.size()=" << b.tx_hashes.size() << ", workshare_hashes.size()=" << b.workshare_hashes.size());
+    LOG_PRINT_L0("[get_block_hashing_blob] About to serialize block_header");
     blobdata blob = t_serializable_object_to_blob(static_cast<block_header>(b));
+    LOG_PRINT_L0("[get_block_hashing_blob] Serialized block_header, blob size=" << blob.size());
+    LOG_PRINT_L0("[get_block_hashing_blob] About to get_tx_tree_hash");
     crypto::hash tree_root_hash = get_tx_tree_hash(b);
+    LOG_PRINT_L0("[get_block_hashing_blob] Got tx_tree_hash");
     blob.append(reinterpret_cast<const char*>(&tree_root_hash), sizeof(tree_root_hash));
+    LOG_PRINT_L0("[get_block_hashing_blob] Appended tree_root_hash, new blob size=" << blob.size());
     blob.append(tools::get_varint_data(b.tx_hashes.size()+1));
+    LOG_PRINT_L0("[get_block_hashing_blob] Appended tx count varint data, blob size=" << blob.size());
+    
+    // Include workshare hashes in the block commitment
+    LOG_PRINT_L0("[get_block_hashing_blob] Appending " << b.workshare_hashes.size() << " workshare hashes");
+    blob.append(tools::get_varint_data(b.workshare_hashes.size()));
+    for (const auto& ws_hash : b.workshare_hashes)
+    {
+      blob.append(reinterpret_cast<const char*>(&ws_hash), sizeof(ws_hash));
+    }
+    LOG_PRINT_L0("[get_block_hashing_blob] Appended workshare hashes, final blob size=" << blob.size());
+    
     return blob;
   }
   //---------------------------------------------------------------
@@ -1601,14 +1618,18 @@ namespace cryptonote
   //---------------------------------------------------------------
   crypto::hash get_tx_tree_hash(const block& b)
   {
+    LOG_PRINT_L0("[get_tx_tree_hash] Starting, tx_hashes.size()=" << b.tx_hashes.size() << ", workshare_hashes.size()=" << b.workshare_hashes.size());
     std::vector<crypto::hash> txs_ids;
     txs_ids.reserve(1 + b.tx_hashes.size());
     crypto::hash h = null_hash;
     size_t bl_sz = 0;
+    LOG_PRINT_L0("[get_tx_tree_hash] About to get miner_tx hash");
     CHECK_AND_ASSERT_THROW_MES(get_transaction_hash(b.miner_tx, h, bl_sz), "Failed to calculate transaction hash");
+    LOG_PRINT_L0("[get_tx_tree_hash] Got miner_tx hash");
     txs_ids.push_back(h);
     for(auto& th: b.tx_hashes)
       txs_ids.push_back(th);
+    LOG_PRINT_L0("[get_tx_tree_hash] Added all tx hashes, calling get_tx_tree_hash with " << txs_ids.size() << " hashes");
     return get_tx_tree_hash(txs_ids);
   }
   //---------------------------------------------------------------
