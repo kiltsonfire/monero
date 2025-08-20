@@ -217,7 +217,7 @@ namespace cryptonote
     
     // Pool configuration
     static constexpr size_t MAX_WORKSHARES_PER_PARENT = 300;
-    static constexpr uint64_t WORKSHARE_EXPIRY_TIME = 3600; // 1 hour in seconds
+    static constexpr uint64_t WORKSHARE_EXPIRY_TIME = 1200; // 20 minutes in seconds
     
     // References
     Blockchain& m_blockchain;

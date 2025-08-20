@@ -103,6 +103,9 @@ struct pool_supplement
     // Map of supplemental tx info that we might need to validate a block
     // Maps TXID -> transaction and blob
     std::unordered_map<crypto::hash, std::pair<transaction, blobdata>> txs_by_txid;
+    // Map of workshares that came with the block
+    // Maps workshare hash -> workshare blob
+    std::unordered_map<crypto::hash, blobdata> workshares_by_hash;
     // If non-zero, then consider all the txs' non-input consensus (NIC) rules verified for this
     // hard fork. User: If you add an unverified transaction to txs_by_txid, set this field to zero!
     mutable std::uint8_t nic_verified_hf_version = 0;

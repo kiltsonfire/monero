@@ -1311,7 +1311,19 @@ namespace cryptonote
       m_miner.resume();
       return false;
     }
-    m_blockchain_storage.add_new_block(b, bvc);
+    
+    // Create pool_supplement with workshares for locally mined block
+    pool_supplement extra_block_txs;
+    for (const auto& ws_hash : b.workshare_hashes)
+    {
+      workshare_pool_entry entry;
+      if (m_workshare_pool.get_workshare(ws_hash, entry))
+      {
+        extra_block_txs.workshares_by_hash[ws_hash] = t_serializable_object_to_blob(entry.ws);
+      }
+    }
+    
+    m_blockchain_storage.add_new_block(b, bvc, extra_block_txs);
     const bool force_sync = m_nettype != FAKECHAIN;
     cleanup_handle_incoming_blocks(force_sync);
     //anyway - update miner template
@@ -1322,12 +1334,11 @@ namespace cryptonote
     CHECK_AND_ASSERT_MES(!bvc.m_verifivation_failed, false, "mined block failed verification");
     if(bvc.m_added_to_main_chain)
     {
-      // Remove workshares that were included in this block from the pool
-      if (!b.workshare_hashes.empty())
-      {
-        m_workshare_pool.remove_workshares(b.workshare_hashes);
-        MDEBUG("Removed " << b.workshare_hashes.size() << " workshares from pool after block added");
-      }
+      // Note: We don't remove workshares from the pool immediately after mining a block.
+      // Workshares are managed with LRU expiry (20 minutes) because:
+      // 1. The same workshare might be included in competing blocks
+      // 2. We need workshares available for relaying blocks
+      // 3. Workshares naturally expire based on time
       
       cryptonote_connection_context exclude_context = {};
       NOTIFY_NEW_FLUFFY_BLOCK::request arg{};
@@ -1347,6 +1358,20 @@ namespace cryptonote
       //pack transactions
       for(auto& tx:  txs)
         arg.b.txs.push_back({tx, crypto::null_hash});
+      
+      //pack workshares
+      for(const auto& ws_hash : b.workshare_hashes)
+      {
+        workshare_pool_entry entry;
+        if (m_workshare_pool.get_workshare(ws_hash, entry))
+        {
+          arg.b.workshares.push_back(t_serializable_object_to_blob(entry.ws));
+        }
+        else
+        {
+          MWARNING("Workshare " << ws_hash << " referenced by block but not found in pool for relay");
+        }
+      }
 
       m_pprotocol->relay_block(arg, exclude_context);
     }

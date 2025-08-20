@@ -41,6 +41,7 @@
 #include "tx_pool.h"
 #include "workshare_pool.h"
 #include "blockchain.h"
+#include <boost/uuid/nil_generator.hpp>
 #include "blockchain_db/blockchain_db.h"
 #include "cryptonote_basic/events.h"
 #include "cryptonote_config.h"
@@ -2247,14 +2248,72 @@ bool Blockchain::handle_get_objects(NOTIFY_REQUEST_GET_OBJECTS::request& arg, NO
     get_transactions_blobs(bl.second.tx_hashes, e.txs, missed_tx_ids, arg.prune);
     
     // Get workshares that are included in this block
-    // These workshares reference this block's parent, so they are indexed by the parent hash
-    if (m_db->workshares_exist(bl.second.prev_id))
+    // We need to get the exact workshares referenced by their hashes in the block
+    if (!bl.second.workshare_hashes.empty())
     {
-      std::vector<workshare> workshares = m_db->get_workshares(bl.second.prev_id);
-      e.workshares.reserve(workshares.size());
-      for (const auto& ws : workshares)
+      e.workshares.reserve(bl.second.workshare_hashes.size());
+      
+      // First try to get workshares from the database (stored when block was added)
+      if (m_db->workshares_exist(bl.second.prev_id))
       {
-        e.workshares.push_back(t_serializable_object_to_blob(ws));
+        std::vector<workshare> db_workshares = m_db->get_workshares(bl.second.prev_id);
+        
+        // Create a map for quick lookup
+        std::unordered_map<crypto::hash, workshare> ws_map;
+        for (const auto& ws : db_workshares)
+        {
+          ws_map[get_workshare_hash(ws)] = ws;
+        }
+        
+        // Get workshares in the order they appear in the block
+        for (const auto& ws_hash : bl.second.workshare_hashes)
+        {
+          auto it = ws_map.find(ws_hash);
+          if (it != ws_map.end())
+          {
+            e.workshares.push_back(t_serializable_object_to_blob(it->second));
+          }
+          else
+          {
+            // This shouldn't happen if database is consistent
+            MWARNING("Workshare " << ws_hash << " referenced by block but not found in database");
+            // Try to get from workshare pool as fallback
+            if (m_workshare_pool)
+            {
+              workshare_pool_entry entry;
+              if (m_workshare_pool->get_workshare(ws_hash, entry))
+              {
+                e.workshares.push_back(t_serializable_object_to_blob(entry.ws));
+              }
+              else
+              {
+                MERROR("Workshare " << ws_hash << " not found in database or pool for block sync");
+              }
+            }
+          }
+        }
+      }
+      else if (m_workshare_pool)
+      {
+        // No workshares in database, try to get from pool (shouldn't normally happen)
+        for (const auto& ws_hash : bl.second.workshare_hashes)
+        {
+          workshare_pool_entry entry;
+          if (m_workshare_pool->get_workshare(ws_hash, entry))
+          {
+            e.workshares.push_back(t_serializable_object_to_blob(entry.ws));
+          }
+          else
+          {
+            MERROR("Workshare " << ws_hash << " not found for block sync");
+          }
+        }
+      }
+      
+      if (e.workshares.size() != bl.second.workshare_hashes.size())
+      {
+        MERROR("Failed to retrieve all workshares for block " << get_block_hash(bl.second) 
+               << ": got " << e.workshares.size() << " of " << bl.second.workshare_hashes.size());
       }
     }
     
@@ -4448,19 +4507,48 @@ leave:
       uint64_t long_term_block_weight = get_next_long_term_block_weight(block_weight);
       
       // Store workshares referenced by this block
-      if (m_workshare_pool && !bl.workshare_hashes.empty())
+      if (!bl.workshare_hashes.empty())
       {
+        MINFO("Processing " << bl.workshare_hashes.size() << " workshares for block at height " << blockchain_height);
         std::vector<workshare> workshares_to_store;
         for (const auto& ws_hash : bl.workshare_hashes)
         {
-          workshare_pool_entry entry;
-          if (m_workshare_pool->get_workshare(ws_hash, entry))
+          // First try to get workshare from the pool supplement (workshares sent with the block)
+          auto ws_it = extra_block_txs.workshares_by_hash.find(ws_hash);
+          if (ws_it != extra_block_txs.workshares_by_hash.end())
           {
-            workshares_to_store.push_back(entry.ws);
+            workshare ws;
+            if (parse_and_validate_from_blob(ws_it->second, ws))
+            {
+              workshares_to_store.push_back(ws);
+            }
+            else
+            {
+              MERROR("Failed to parse workshare " << ws_hash << " from pool supplement");
+              bvc.m_verifivation_failed = true;
+              return false;
+            }
+          }
+          // Fall back to local pool if not in supplement (e.g., when mining our own block)
+          else if (m_workshare_pool)
+          {
+            workshare_pool_entry entry;
+            if (m_workshare_pool->get_workshare(ws_hash, entry))
+            {
+              workshares_to_store.push_back(entry.ws);
+            }
+            else
+            {
+              MERROR("Workshare " << ws_hash << " referenced by block but not found in pool supplement or local pool");
+              bvc.m_verifivation_failed = true;
+              return false;
+            }
           }
           else
           {
-            MWARNING("Workshare " << ws_hash << " referenced by block but not found in pool");
+            MERROR("Workshare " << ws_hash << " referenced by block but not found in pool supplement");
+            bvc.m_verifivation_failed = true;
+            return false;
           }
         }
         
@@ -4468,6 +4556,21 @@ leave:
         {
           // Store workshares indexed by the parent block hash (bl.prev_id)
           m_db->add_workshares(bl.prev_id, workshares_to_store);
+          
+          // Also add workshares to the pool so they're available for relaying
+          // This handles workshares we receive from other nodes
+          if (m_workshare_pool)
+          {
+            for (const auto& ws : workshares_to_store)
+            {
+              crypto::hash ws_hash = get_workshare_hash(ws);
+              workshare_verification_context wvc = {};
+              // add_workshare handles duplicates gracefully (returns false but doesn't error)
+              // Use nil UUID since these are from blocks, not directly from peers
+              m_workshare_pool->add_workshare(ws, ws_hash, boost::uuids::nil_uuid(), wvc);
+              // We don't care about the result - duplicates are fine
+            }
+          }
         }
       }
       

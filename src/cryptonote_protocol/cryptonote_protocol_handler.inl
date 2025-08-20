@@ -663,6 +663,67 @@ namespace cryptonote
       drop_connection(context, false, false);
       return 1;
     }
+    
+    // Add workshares to the pool supplement
+    if (!arg.b.workshares.empty())
+    {
+      MINFO("Block " << new_block_hash << " has " << arg.b.workshares.size() << " workshares, block expects " << new_block.workshare_hashes.size());
+      
+      // The number of workshares sent should match the number in the block header
+      if (arg.b.workshares.size() != new_block.workshare_hashes.size())
+      {
+        MERROR("Workshare count mismatch: received " << arg.b.workshares.size() 
+               << " workshares but block has " << new_block.workshare_hashes.size() << " hashes");
+        drop_connection(context, false, false);
+        return 1;
+      }
+      
+      // Safety check - don't process unreasonable number of workshares
+      const size_t MAX_SAFE_WORKSHARES = 500;
+      if (arg.b.workshares.size() > MAX_SAFE_WORKSHARES)
+      {
+        MERROR("Block has too many workshares for safe processing: " << arg.b.workshares.size() 
+               << " (max safe: " << MAX_SAFE_WORKSHARES << ")");
+        drop_connection(context, false, false);
+        return 1;
+      }
+      
+      // Parse and validate each workshare, then add to pool supplement
+      MINFO("Starting to process " << arg.b.workshares.size() << " workshares for block " << new_block_hash);
+      for (size_t i = 0; i < arg.b.workshares.size(); ++i)
+      {
+        if (i % 50 == 0 && i > 0)
+        {
+          MINFO("Processed " << i << " / " << arg.b.workshares.size() << " workshares");
+        }
+        workshare ws;
+        if (!parse_and_validate_from_blob(arg.b.workshares[i], ws))
+        {
+          MERROR("Failed to parse workshare " << i << " for block " << new_block_hash);
+          drop_connection(context, false, false);
+          return 1;
+        }
+        
+        crypto::hash ws_hash = get_workshare_hash(ws);
+        if (ws_hash != new_block.workshare_hashes[i])
+        {
+          MERROR("Workshare hash mismatch at index " << i << ": expected " 
+                 << new_block.workshare_hashes[i] << " but got " << ws_hash);
+          drop_connection(context, false, false);
+          return 1;
+        }
+        
+        extra_block_txs.workshares_by_hash[ws_hash] = arg.b.workshares[i];
+      }
+    }
+    else if (!new_block.workshare_hashes.empty())
+    {
+      // Block has workshares but none were sent - this is an error
+      MERROR("Block " << new_block_hash << " has " << new_block.workshare_hashes.size() 
+             << " workshare hashes but no workshares were sent");
+      drop_connection(context, false, false);
+      return 1;
+    }
 
     // try adding block to the blockchain
     block_verification_context bvc = {}; 

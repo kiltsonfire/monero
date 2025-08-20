@@ -5773,8 +5773,13 @@ void BlockchainLMDB::add_workshares(const crypto::hash& parent_block_hash, const
     cryptonote::blobdata blob = t_serializable_object_to_blob(ws);
     MDB_val_sized(val, blob);
     
-    int result = mdb_cursor_put(m_cur_workshares_by_parent, &key, &val, MDB_APPENDDUP);
-    if (result)
+    // Use MDB_NODUPDATA to avoid duplicate workshares
+    // This will silently ignore duplicates rather than throwing an error
+    int result = mdb_cursor_put(m_cur_workshares_by_parent, &key, &val, MDB_APPENDDUP | MDB_NODUPDATA);
+    
+    // MDB_KEYEXIST is expected if the workshare already exists (e.g., during reorganization)
+    // We silently ignore it since the same workshare can be in multiple blocks
+    if (result && result != MDB_KEYEXIST)
       throw0(DB_ERROR(lmdb_error("Failed to add workshare: ", result).c_str()));
   }
 }
