@@ -1653,12 +1653,14 @@ bool Blockchain::create_block_template(block& b, const crypto::hash *from_block,
   size_t workshares_weight = 0;
   if (m_workshare_pool)
   {
-    // Get workshares for the parent block (current top)
+    // Get workshares for the block we're about to mine (they reference the current top)
+    // The workshares in the pool have prev_id = current top block (which is b.prev_id)
     const size_t MAX_WORKSHARES_PER_BLOCK = 300; // Maximum workshares to include
     std::vector<workshare_pool_entry> workshares = m_workshare_pool->get_workshares_for_parent(
       b.prev_id, MAX_WORKSHARES_PER_BLOCK);
     
-    LOG_PRINT_L1("Blockchain creating template: found " << workshares.size() << " workshares in pool for parent " << b.prev_id);
+    LOG_PRINT_L1("Blockchain creating template at height " << height 
+                 << ": found " << workshares.size() << " workshares in pool for parent " << b.prev_id);
     
     // Add workshare hashes to the block
     b.workshare_hashes.clear();

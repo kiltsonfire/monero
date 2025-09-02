@@ -1398,10 +1398,6 @@ namespace cryptonote
       return false;
     }
     
-    // Update miner template to include this workshare
-    // This allows workshares found while mining block N+1 to be included IN block N+1
-    m_miner.update_block_template_with_workshare(ws, id);
-    
     // Broadcast to network
     if (m_pprotocol)
     {
